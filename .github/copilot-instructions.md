@@ -33,7 +33,8 @@ Storage Account in Tenant A.
 │   ├── agents/                   # Custom Copilot agents
 │   │   ├── bicep-infrastructure.md
 │   │   ├── python-function.md
-│   │   └── cicd-workflow.md
+│   │   ├── cicd-workflow.md
+│   │   └── documentation.md
 │   └── workflows/
 │       ├── deploy-infra.yml      # Bicep deployment workflow
 │       └── deploy-function.yml   # Function code deployment workflow

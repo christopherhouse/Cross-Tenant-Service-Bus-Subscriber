@@ -1,5 +1,11 @@
 # Cross-Tenant Service Bus Subscriber
 
+[![Deploy Function](https://github.com/christopherhouse/Cross-Tenant-Service-Bus-Subscriber/actions/workflows/deploy-function.yml/badge.svg)](https://github.com/christopherhouse/Cross-Tenant-Service-Bus-Subscriber/actions/workflows/deploy-function.yml)
+[![Deploy Infrastructure](https://github.com/christopherhouse/Cross-Tenant-Service-Bus-Subscriber/actions/workflows/deploy-infra.yml/badge.svg)](https://github.com/christopherhouse/Cross-Tenant-Service-Bus-Subscriber/actions/workflows/deploy-infra.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
+[![Azure Functions v4](https://img.shields.io/badge/Azure%20Functions-v4-blue)](https://learn.microsoft.com/azure/azure-functions/)
+
 An **Azure Function (Python)** that polls a Service Bus topic subscription
 hosted in a **separate Entra (Azure AD) tenant** and writes each received
 message payload as a JSON blob to Azure Blob Storage.
@@ -251,14 +257,15 @@ python -m pytest tests/ -v
 
 ## GitHub Copilot Coding Agent
 
-This repository ships three specialist Copilot Coding Agents in
-`.github/agents/` to facilitate "vibe coding":
+This repository ships four specialist Copilot Coding Agents in `.github/agents/`
+to facilitate "vibe coding":
 
 | Agent | File | Purpose |
 |---|---|---|
 | Bicep Infrastructure | `bicep-infrastructure.md` | Author/review Bicep templates |
 | Python Function | `python-function.md` | Author/review function code |
 | CI/CD Workflow | `cicd-workflow.md` | Author/review GitHub Actions workflows |
+| Documentation | `documentation.md` | Maintain README and open-source docs |
 
 Global repository context and conventions are defined in
 `.github/copilot-instructions.md`.
@@ -273,3 +280,22 @@ Global repository context and conventions are defined in
   connection string).
 - FTPS is disabled; minimum TLS 1.2 enforced on the Function App.
 - Blob container public access is disabled.
+
+See [SECURITY.md](SECURITY.md) for the full security policy and vulnerability
+reporting process.
+
+---
+
+## Contributing
+
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for
+coding conventions, branch naming, commit message format, and the pull request
+process.
+
+---
+
+## License
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+This project is licensed under the MIT License — see [LICENSE](LICENSE) for details.

@@ -58,9 +58,7 @@ jobs:
       - name: Run unit tests
         run: |
           pip install pytest pytest-mock
-          python -m pytest tests/ -v --tb=short || true
-        # "|| true" keeps the job green even when there are no tests yet;
-        # remove once tests are in place.
+          python -m pytest tests/ -v --tb=short
 
       - name: Azure Login (OIDC)
         uses: azure/login@v2
