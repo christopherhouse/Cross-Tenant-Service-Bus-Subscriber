@@ -81,6 +81,16 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
           name:  'FUNCTIONS_WORKER_RUNTIME'
           value: 'python'
         }
+        // ── Deployment: disable Oryx remote build ───────────────────────────
+        // Packages are pre-installed locally via pip --target and bundled in
+        // the deployment zip.  Disabling SCM/Oryx build here ensures that any
+        // deployment path (GitHub Actions, VS Code, Azure CLI, Kudu portal)
+        // uses those bundled packages rather than triggering a remote build
+        // that would overwrite them.
+        {
+          name:  'SCM_DO_BUILD_DURING_DEPLOYMENT'
+          value: '0'
+        }
         // ── Identity-based AzureWebJobsStorage ──────────────────────────────
         // Avoids storing a storage connection string in plaintext.
         {
