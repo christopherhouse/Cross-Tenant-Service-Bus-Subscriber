@@ -58,6 +58,7 @@ SB_MAX_WAIT_TIME_SECONDS        – (optional) max wait time per poll in seconds
                                   default 5
 """
 
+import base64
 import json
 import logging
 import os
@@ -66,8 +67,15 @@ from datetime import UTC, datetime
 
 import azure.functions as func
 from azure.identity import ClientAssertionCredential, ManagedIdentityCredential
+from azure.monitor.opentelemetry import configure_azure_monitor
 from azure.servicebus import ServiceBusClient, ServiceBusReceivedMessage
 from azure.storage.blob import BlobServiceClient
+
+configure_azure_monitor(
+    resource_attributes={"service.name": "cross-tenant-sb-subscriber"},
+    sampling_ratio=1.0,
+)
+logger = logging.getLogger("function_app")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Configuration helpers
@@ -91,6 +99,46 @@ def _opt_env(name: str, default: str) -> str:
 # Credential factories
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _log_token_claims(token: str, label: str) -> None:
+    """Decode a JWT payload and log key claims for troubleshooting.
+
+    Only the non-sensitive claim metadata is logged — the raw token value is
+    never written to any log destination.
+    """
+    try:
+        parts = token.split(".")
+        if len(parts) < 2:
+            logger.warning("%s token does not look like a JWT (no '.' separators).", label)
+            return
+        # Fix base64 padding
+        payload_b64 = parts[1]
+        payload_b64 += "=" * (-len(payload_b64) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload_b64))
+
+        def _ts(epoch) -> str:
+            """Convert a Unix epoch to ISO 8601 or return 'n/a'."""
+            if epoch is None:
+                return "n/a"
+            return datetime.fromtimestamp(int(epoch), tz=UTC).isoformat()
+
+        logger.info(
+            "%s token claims — iss: %s | aud: %s | sub: %s | oid: %s | "
+            "tid: %s | appid: %s | iat: %s | nbf: %s | exp: %s",
+            label,
+            claims.get("iss", "n/a"),
+            claims.get("aud", "n/a"),
+            claims.get("sub", "n/a"),
+            claims.get("oid", "n/a"),
+            claims.get("tid", "n/a"),
+            claims.get("appid") or claims.get("azp", "n/a"),
+            _ts(claims.get("iat")),
+            _ts(claims.get("nbf")),
+            _ts(claims.get("exp")),
+        )
+    except Exception:
+        logger.warning("Failed to decode %s token claims for diagnostics.", label, exc_info=True)
+
+
 def _build_service_bus_credential() -> ClientAssertionCredential:
     """
     Build a ``ClientAssertionCredential`` that performs the cross-tenant token
@@ -111,7 +159,9 @@ def _build_service_bus_credential() -> ClientAssertionCredential:
 
     def get_assertion() -> str:
         try:
-            return uami_credential.get_token("api://AzureADTokenExchange").token
+            token = uami_credential.get_token("api://AzureADTokenExchange").token
+            _log_token_claims(token, "UAMI federated assertion")
+            return token
         except Exception as exc:
             raise RuntimeError(
                 "Failed to obtain federated assertion token from IMDS for "
@@ -227,7 +277,7 @@ def service_bus_subscriber(timer: func.TimerRequest) -> None:
     ``ManagedIdentityCredential`` for same-tenant Blob Storage access.
     """
     if timer.past_due:
-        logging.warning("Timer is past due; processing may have been delayed.")
+        logger.warning("Timer is past due; processing may have been delayed.")
 
     # ── Required configuration ────────────────────────────────────────────────
     sb_namespace = _require_env("CROSS_TENANT_SERVICE_BUS_NAMESPACE")
@@ -269,20 +319,20 @@ def service_bus_subscriber(timer: func.TimerRequest) -> None:
                         blob_service_client, container_name, message
                     )
                     receiver.complete_message(message)
-                    logging.info(
+                    logger.info(
                         "Message %s written to blob '%s'.",
                         message.message_id,
                         blob_name,
                     )
                     processed += 1
                 except Exception:  # noqa: BLE001
-                    logging.exception(
+                    logger.exception(
                         "Failed to process message %s; abandoning.",
                         message.message_id,
                     )
                     receiver.abandon_message(message)
                     failed += 1
 
-    logging.info(
+    logger.info(
         "Poll complete: %d processed, %d failed/abandoned.", processed, failed
     )

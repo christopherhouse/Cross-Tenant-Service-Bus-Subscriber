@@ -117,6 +117,10 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
           name:  'APPLICATIONINSIGHTS_CONNECTION_STRING'
           value: appInsightsConnectionString
         }
+        {
+          name:  'PYTHON_ENABLE_OPENTELEMETRY'
+          value: 'true'
+        }
         // ── Cross-tenant Service Bus (read directly by Python function code) ────
         // The function uses ClientAssertionCredential with a federated identity
         // assertion issued by the UAMI to authenticate against a Service Bus
