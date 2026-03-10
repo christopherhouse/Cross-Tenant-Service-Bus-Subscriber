@@ -53,12 +53,6 @@ param crossTenantAppClientId string
 @description('Blob container name where received messages are stored.')
 param messageContainerName string = 'sb-messages'
 
-@description('NCRONTAB schedule for the timer trigger (default: every minute).')
-param timerSchedule string = '0 */1 * * * *'
-
-@description('Maximum messages per polling invocation.')
-param maxMessageBatchSize int = 10
-
 // ── Derived names ────────────────────────────────────────────────────────────
 
 var abbr = '${workloadName}-${environmentName}'
@@ -115,8 +109,6 @@ module functionApp 'modules/function-app.bicep' = {
     crossTenantAppClientId: crossTenantAppClientId
     storageAccountNameForMessages: storage.outputs.name
     messageContainerName: messageContainerName
-    timerSchedule: timerSchedule
-    maxMessageBatchSize: maxMessageBatchSize
   }
 }
 
