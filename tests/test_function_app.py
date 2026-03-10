@@ -277,6 +277,19 @@ class TestWriteMessageToBlob:
         msg = _make_sb_message()
         msg.body = iter(["not bytes", "also not bytes"])  # strings, not bytes
 
+        with pytest.raises(TypeError, match="Unexpected Service Bus message body"):
+            fa._write_message_to_blob(mock_bsc, "container", msg)
+
+    def test_body_non_iterable_raises_type_error(self):
+        """A body that is neither bytes nor iterable (e.g. int) must raise TypeError."""
+        import function_app as fa
+
+        mock_bsc = MagicMock()
+        mock_bsc.get_blob_client.return_value = MagicMock()
+
+        msg = _make_sb_message()
+        msg.body = 12345  # non-iterable, non-bytes
+
         with pytest.raises(TypeError, match="Unexpected Service Bus message body format"):
             fa._write_message_to_blob(mock_bsc, "container", msg)
 

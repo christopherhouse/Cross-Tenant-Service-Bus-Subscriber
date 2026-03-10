@@ -157,13 +157,22 @@ def _write_message_to_blob(
 
     # ``message.body`` may be raw bytes or an iterable of bytes chunks.
     body = message.body
-    try:
-        payload_bytes: bytes = body if isinstance(body, bytes) else b"".join(body)
-    except TypeError as exc:
+    if isinstance(body, bytes):
+        payload_bytes: bytes = body
+    elif hasattr(body, "__iter__"):
+        try:
+            payload_bytes = b"".join(body)
+        except TypeError as exc:
+            raise TypeError(
+                f"Unexpected Service Bus message body type: elements of the iterable "
+                f"are not bytes (got '{type(exc.__context__) if exc.__context__ else type(body)}'). "
+                "Expected an iterable of bytes."
+            ) from exc
+    else:
         raise TypeError(
             f"Unexpected Service Bus message body format: {type(body).__name__}. "
             "Expected bytes or an iterable of bytes."
-        ) from exc
+        )
     try:
         body_text = payload_bytes.decode("utf-8")
     except UnicodeDecodeError:
