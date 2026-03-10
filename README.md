@@ -166,7 +166,8 @@ Add a **Federated Credential** on the App Registration for GitHub OIDC:
 | `AZURE_RG_NAME` | `rg-sbsub-dev` | |
 | `AZURE_LOCATION` | `eastus` | Used by `deploy-infra.yml` |
 | `ENVIRONMENT_NAME` | `dev` | |
-| `WORKLOAD_NAME` | `sbsub` | Used to derive ACR name (`cr<workload><env>`) and image name (`func-<workload>-<env>`) |
+| `WORKLOAD_NAME` | `sbsub` | Used to derive the image name (`func-<workload>-<env>`) |
+| `ACR_NAME` | `crsbsubdev` | Name of the Azure Container Registry (output by infra deployment); used by `deploy-function.yml` |
 | `CROSS_TENANT_SB_NAMESPACE` | `mybus.servicebus.windows.net` | Fully-qualified Service Bus namespace hostname; used by `deploy-infra.yml` |
 | `CROSS_TENANT_TENANT_ID` | Entra Tenant ID of Tenant B | |
 | `CROSS_TENANT_APP_CLIENT_ID` | Client ID of the App Registration in Tenant B | |
@@ -235,8 +236,8 @@ The CI/CD workflow uses **ACR Tasks** (`az acr build`) so no local Docker
 daemon is required on the runner.
 
 ```bash
-# Derive names (replace placeholders with your values)
-ACR_NAME="cr<workloadname><environmentname>"   # e.g. crsbsubdev  (no hyphens — alphanumeric only)
+# Set your values
+ACR_NAME="<acr-name>"          # from the ACR_NAME GitHub Variable / infra output
 IMAGE_NAME="func-<workload-name>-<environment-name>"  # e.g. func-sbsub-dev
 RG_NAME="<resource-group-name>"
 FUNC_APP_NAME="<function-app-name>"
