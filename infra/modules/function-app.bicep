@@ -5,7 +5,10 @@
   • User Assigned Managed Identity
   • All application settings required by the function code
   • AzureWebJobsStorage configured to use identity-based auth
-  • SERVICE_BUS_CONNECTION configured for cross-tenant federated identity
+  • Cross-tenant Service Bus auth handled entirely by the Python function code
+    using ClientAssertionCredential (UAMI → federated credential → App
+    Registration in Tenant B).  The runtime no longer manages the Service Bus
+    connection; the six SERVICE_BUS_CONNECTION__* settings have been removed.
 */
 
 @description('Name of the Function App.')
@@ -33,7 +36,7 @@ param uamiId                        string
 param uamiClientId                  string
 
 // Cross-tenant Service Bus settings
-@description('Fully-qualified Service Bus namespace hostname in Tenant B (e.g. mybus.servicebus.windows.net).')
+@description('FQDN of the Service Bus namespace in Tenant B (e.g. mybus.servicebus.windows.net). Consumed directly by Python code as CROSS_TENANT_SERVICE_BUS_NAMESPACE; not a runtime binding setting.')
 param crossTenantServiceBusNamespace string
 
 @description('Service Bus topic name in Tenant B.')
@@ -42,10 +45,10 @@ param crossTenantTopicName           string
 @description('Service Bus topic subscription name in Tenant B.')
 param crossTenantSubscriptionName    string
 
-@description('Entra Tenant ID of Tenant B (the Service Bus tenant).')
+@description('Entra Tenant ID of Tenant B. Consumed directly by Python code as CROSS_TENANT_TENANT_ID for ClientAssertionCredential; not a runtime binding setting.')
 param crossTenantTenantId            string
 
-@description('Client ID of the App Registration in Tenant B that has a federated credential trusting the UAMI.')
+@description('Client ID of the App Registration in Tenant B with a federated credential trusting the UAMI. Consumed directly by Python code as CROSS_TENANT_APP_CLIENT_ID for ClientAssertionCredential; not a runtime binding setting.')
 param crossTenantAppClientId         string
 
 // Storage settings
@@ -97,36 +100,23 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
           name:  'APPLICATIONINSIGHTS_CONNECTION_STRING'
           value: appInsightsConnectionString
         }
-        // ── Service Bus trigger identity-based connection (cross-tenant) ─────
-        // The trigger binding resolves these via the "SERVICE_BUS_CONNECTION"
-        // prefix.  Cross-tenant access uses managedidentityasfederatedidentity:
-        //   UAMI (Tenant A) → federated credential → App Registration (Tenant B)
-        //   → Service Bus Data Receiver role on the Tenant B namespace.
-        // Note: on Consumption/Flex Consumption plans the platform will not
-        // auto-scale based on a cross-tenant trigger; the function still fires.
+        // ── Cross-tenant Service Bus (read directly by Python function code) ────
+        // The function uses ClientAssertionCredential with a federated identity
+        // assertion issued by the UAMI to authenticate against a Service Bus
+        // namespace in a different Entra tenant (Tenant B).  These values are
+        // consumed by the application code; the Functions runtime no longer
+        // manages the Service Bus connection.
         {
-          name:  'SERVICE_BUS_CONNECTION__fullyQualifiedNamespace'
+          name:  'CROSS_TENANT_SERVICE_BUS_NAMESPACE'
           value: crossTenantServiceBusNamespace
         }
         {
-          name:  'SERVICE_BUS_CONNECTION__credential'
-          value: 'managedidentityasfederatedidentity'
-        }
-        {
-          name:  'SERVICE_BUS_CONNECTION__azureCloud'
-          value: 'public'
-        }
-        {
-          name:  'SERVICE_BUS_CONNECTION__clientId'
-          value: crossTenantAppClientId
-        }
-        {
-          name:  'SERVICE_BUS_CONNECTION__tenantId'
+          name:  'CROSS_TENANT_TENANT_ID'
           value: crossTenantTenantId
         }
         {
-          name:  'SERVICE_BUS_CONNECTION__managedIdentityClientId'
-          value: uamiClientId
+          name:  'CROSS_TENANT_APP_CLIENT_ID'
+          value: crossTenantAppClientId
         }
         // ── Service Bus topic / subscription (consumed by function code) ──────
         {
