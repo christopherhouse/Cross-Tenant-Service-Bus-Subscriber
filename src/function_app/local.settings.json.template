@@ -4,13 +4,9 @@
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
     "FUNCTIONS_WORKER_RUNTIME": "python",
 
-    "SERVICE_BUS_CONNECTION__fullyQualifiedNamespace": "<your-servicebus-namespace>.servicebus.windows.net",
-    "SERVICE_BUS_CONNECTION__credential": "managedidentityasfederatedidentity",
-    "SERVICE_BUS_CONNECTION__azureCloud": "public",
-    "SERVICE_BUS_CONNECTION__clientId": "<app-registration-client-id-in-tenant-b>",
-    "SERVICE_BUS_CONNECTION__tenantId": "<tenant-b-entra-tenant-id>",
-    "SERVICE_BUS_CONNECTION__managedIdentityClientId": "<user-assigned-mi-client-id-in-tenant-a>",
-
+    "CROSS_TENANT_SERVICE_BUS_NAMESPACE": "<your-servicebus-namespace>.servicebus.windows.net",
+    "CROSS_TENANT_TENANT_ID": "<tenant-b-entra-tenant-id>",
+    "CROSS_TENANT_APP_CLIENT_ID": "<app-registration-client-id-in-tenant-b>",
     "CROSS_TENANT_TOPIC_NAME": "<your-topic-name>",
     "CROSS_TENANT_SUBSCRIPTION_NAME": "<your-subscription-name>",
 

@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Replaced the Service Bus trigger with a timer trigger and implemented
+  cross-tenant authentication using `ClientAssertionCredential` in the Python
+  function code. The previous implementation used the runtime
+  `managedidentityasfederatedidentity` credential which failed to perform the
+  UAMI→Tenant B token exchange, causing `InvalidIssuer: Token issuer is
+  invalid` errors when connecting to the Service Bus namespace in Tenant B.
+- Removed the six `SERVICE_BUS_CONNECTION__*` runtime binding app settings
+  (`credential`, `azureCloud`, `clientId`, `tenantId`,
+  `managedIdentityClientId`, `fullyQualifiedNamespace`) and replaced them with
+  three clean `CROSS_TENANT_*` env vars consumed directly by the Python code:
+  `CROSS_TENANT_SERVICE_BUS_NAMESPACE`, `CROSS_TENANT_TENANT_ID`,
+  `CROSS_TENANT_APP_CLIENT_ID`.
+- Added `azure-servicebus>=7.12.0,<8.0.0` to `requirements.txt`.
+
 ### Added
 - Initial project scaffold with full cross-tenant Service Bus subscriber solution.
 - Python Azure Function (v2 programming model) with timer trigger that polls a
