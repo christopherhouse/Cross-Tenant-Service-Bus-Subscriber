@@ -14,6 +14,8 @@ Storage Account in Tenant A.
 .
 ├── src/
 │   └── function_app/          # Azure Function source code
+│       ├── Dockerfile                      # Container image definition
+│       ├── .dockerignore                   # Docker build context exclusions
 │       ├── function_app.py    # Main function (timer trigger, cross-tenant auth, blob write)
 │       ├── host.json          # Azure Functions host configuration
 │       ├── requirements.txt   # Python dependencies
@@ -26,6 +28,7 @@ Storage Account in Tenant A.
 │       ├── storage-account.bicep
 │       ├── app-service-plan.bicep
 │       ├── function-app.bicep
+│       ├── container-registry.bicep        # ACR (Basic SKU) + AcrPull role
 │       ├── log-analytics-workspace.bicep
 │       └── app-insights.bicep
 ├── .github/
@@ -37,35 +40,41 @@ Storage Account in Tenant A.
 │   │   └── documentation.md
 │   └── workflows/
 │       ├── deploy-infra.yml      # Bicep deployment workflow
-│       └── deploy-function.yml   # Function code deployment workflow
+│       └── deploy-function.yml   # Container build and deployment workflow
 └── tests/                    # Python unit tests (pytest)
 ```
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│ Tenant A  (Function hosting tenant)                  │
-│                                                      │
-│  ┌──────────────┐    ┌─────────────────────────┐    │
-│  │ Azure Function│    │   Storage Account        │    │
-│  │  (timer, 1m) │───▶│   (messages container)   │    │
-│  └──────┬───────┘    └─────────────────────────┘    │
-│         │ UAMI (id-sbsub-dev)                         │
-└─────────┼───────────────────────────────────────────┘
-          │
-          │  ClientAssertionCredential
-          │  (UAMI token → Tenant B App Registration
-          │   via Federated Credential)
-          ▼
-┌─────────────────────────────────────────────────────┐
-│ Tenant B  (Service Bus tenant)                       │
-│                                                      │
-│  ┌─────────────────────────────────────────────┐    │
-│  │ Service Bus Namespace                        │    │
-│  │  └─ Topic ─▶ Subscription (receiver)        │    │
-│  └─────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│ Tenant A  (Function hosting tenant)                           │
+│                                                               │
+│  ┌────────────────────────┐    ┌──────────────────────────┐  │
+│  │  Azure Container       │    │  Storage Account         │  │
+│  │  Registry (ACR)        │    │  /sb-messages/<date>/    │  │
+│  └────────────┬───────────┘    └──────────────────────────┘  │
+│    pull image │ (UAMI / AcrPull)              ▲              │
+│               ▼                               │ write blobs  │
+│  ┌────────────────────────────────────────────┴───────────┐  │
+│  │  Azure Function  (timer, every 1 min)                  │  │
+│  └─────────────────────────┬──────────────────────────────┘  │
+│                             │ User Assigned MI (UAMI)         │
+└─────────────────────────────┼────────────────────────────────┘
+                              │
+                              │  ClientAssertionCredential
+                              │  UAMI token (api://AzureADTokenExchange)
+                              │  → Tenant B App Registration (federated credential)
+                              │  → Tenant B token → Service Bus Data Receiver
+                              ▼
+┌──────────────────────────────────────────────────────────────┐
+│ Tenant B  (Service Bus tenant)                                │
+│                                                               │
+│  ┌──────────────────────────────────────────────────────┐    │
+│  │ Service Bus Namespace                                 │    │
+│  │  └─ Topic ─▶ Subscription                            │    │
+│  └──────────────────────────────────────────────────────┘    │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ## Key technologies
@@ -78,6 +87,7 @@ Storage Account in Tenant A.
 | azure-identity | ≥ 1.17 (ClientAssertionCredential for cross-tenant auth) |
 | azure-servicebus | ≥ 7.12 |
 | azure-storage-blob | ≥ 12.22 |
+| Docker | Container image (`mcr.microsoft.com/azure-functions/python:4-python3.13`); CI/CD uses ACR Tasks |
 | Bicep | Latest (deployed via GitHub Actions) |
 | GitHub Actions | OIDC / federated credential workflow auth |
 
@@ -112,11 +122,20 @@ Storage Account in Tenant A.
 
 ## Local development setup
 
+### Option A — Azure Functions Core Tools
+
 1. Install [Azure Functions Core Tools v4](https://learn.microsoft.com/en-us/azure/azure-functions/functions-run-local).
 2. Copy `src/function_app/local.settings.json.template` →
    `src/function_app/local.settings.json` and fill in values.
 3. `cd src/function_app && pip install -r requirements.txt`
 4. `func start`
+
+### Option B — Docker
+
+1. Extract settings to a `.env` file:
+   `jq -r '.Values | to_entries[] | "\(.key)=\(.value)"' src/function_app/local.settings.json > src/function_app/.env`
+2. `docker build -t func-sbsub-local src/function_app/`
+3. `docker run -p 7071:80 --env-file src/function_app/.env func-sbsub-local`
 
 > **Note**: Cross-tenant Service Bus auth requires a real UAMI; use
 > `DefaultAzureCredential` locally only if your developer account has been
