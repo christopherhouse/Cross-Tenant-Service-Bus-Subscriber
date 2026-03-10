@@ -57,7 +57,7 @@ jobs:
 
       - name: Run unit tests
         run: |
-          pip install pytest pytest-mock
+          pip install pytest pytest-mock -r src/function_app/requirements.txt
           python -m pytest tests/ -v --tb=short
 
       - name: Azure Login (OIDC)
