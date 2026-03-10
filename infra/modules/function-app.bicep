@@ -52,14 +52,6 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
           name:  'FUNCTIONS_WORKER_RUNTIME'
           value: 'python'
         }
-        {
-          name:  'SCM_DO_BUILD_DURING_DEPLOYMENT'
-          value: '1'
-        }
-        {
-          name:  'ENABLE_ORYX_BUILD'
-          value: 'true'
-        }
         // ── Identity-based AzureWebJobsStorage ──────────────────────────────
         // Avoids storing a storage connection string in plaintext.
         {

@@ -70,4 +70,4 @@ jobs:
         with:
           app-name:    ${{ vars.AZURE_FUNCTION_APP_NAME }}
           package:     src/function_app
-          scm-do-build-during-deployment: true
+          remote-build: true
