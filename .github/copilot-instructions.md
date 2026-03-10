@@ -72,7 +72,7 @@ Storage Account in Tenant A.
 
 | Technology | Version / Notes |
 |---|---|
-| Python | 3.11 |
+| Python | 3.13 |
 | Azure Functions | v4, Python v2 programming model |
 | azure-functions | ≥ 1.21 |
 | azure-identity | ≥ 1.17 (ClientAssertionCredential for cross-tenant auth) |

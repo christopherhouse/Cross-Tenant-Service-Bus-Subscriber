@@ -1,7 +1,7 @@
 /*
   modules/function-app.bicep
   Provisions the Azure Function App with:
-  • Python 3.11 Linux runtime
+  • Python 3.13 Linux runtime
   • User Assigned Managed Identity
   • All application settings required by the function code
   • AzureWebJobsStorage configured to use identity-based auth
@@ -41,7 +41,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
     serverFarmId: appServicePlanId
     reserved:     true
     siteConfig: {
-      linuxFxVersion: 'Python|3.11'
+      linuxFxVersion: 'Python|3.13'
       appSettings: [
         // ── Azure Functions runtime ─────────────────────────────────────────
         {
