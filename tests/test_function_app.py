@@ -9,7 +9,7 @@ import json
 import os
 import sys
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -27,9 +27,9 @@ def _make_sb_message(
     message_id: str = "msg-001",
     content_type: str = "application/json",
 ):
-    """Create a mock Service Bus message."""
+    """Create a mock func.ServiceBusMessage."""
     msg = MagicMock()
-    msg.body = body
+    msg.get_body.return_value = body
     msg.message_id = message_id
     msg.content_type = content_type
     msg.subject = "test-subject"
@@ -42,11 +42,11 @@ def _make_sb_message(
 def _base_env(extra: dict | None = None) -> dict:
     """Return a minimal set of required environment variables."""
     env = {
-        "CROSS_TENANT_SERVICE_BUS_NAMESPACE": "test-ns.servicebus.windows.net",
+        "SERVICE_BUS_CONNECTION__fullyQualifiedNamespace": "test-ns.servicebus.windows.net",
+        "SERVICE_BUS_CONNECTION__credential": "managedidentity",
+        "SERVICE_BUS_CONNECTION__clientId": "uami-client-id",
         "CROSS_TENANT_TOPIC_NAME": "test-topic",
         "CROSS_TENANT_SUBSCRIPTION_NAME": "test-sub",
-        "CROSS_TENANT_TENANT_ID": "tenant-b-id",
-        "CROSS_TENANT_APP_CLIENT_ID": "app-client-id",
         "USER_ASSIGNED_MI_CLIENT_ID": "uami-client-id",
         "STORAGE_ACCOUNT_NAME": "teststorage",
         "STORAGE_CONTAINER_NAME": "sb-messages",
@@ -116,23 +116,6 @@ class TestWriteMessageToBlob:
         assert payload["subject"] == "test-subject"
         assert payload["correlationId"] == "corr-001"
 
-    def test_handles_byte_generator_body(self):
-        import function_app as fa
-
-        mock_blob_client = MagicMock()
-        mock_bsc = MagicMock()
-        mock_bsc.get_blob_client.return_value = mock_blob_client
-
-        # Simulate a generator body (as returned by azure-servicebus)
-        msg = _make_sb_message()
-        msg.body = iter([b'{"gen": ', b'"body"}'])
-
-        fa._write_message_to_blob(mock_bsc, "container", msg)
-
-        upload_data = mock_blob_client.upload_blob.call_args[0][0]
-        payload = json.loads(upload_data)
-        assert payload["body"] == '{"gen": "body"}'
-
     def test_handles_missing_message_id(self):
         import function_app as fa
 
@@ -163,13 +146,13 @@ class TestWriteMessageToBlob:
         assert kwargs.get("overwrite") is True
 
 
-# ── Tests: service_bus_poller (integration-style, fully mocked) ───────────────
+# ── Tests: service_bus_subscriber (integration-style, fully mocked) ───────────
 
-class TestServiceBusPoller:
-    """Tests for the main timer-triggered function."""
+class TestServiceBusSubscriber:
+    """Tests for the main Service Bus–triggered function."""
 
-    def _run_poller(self, messages, monkeypatch, env_extra=None):
-        """Helper: patch all external deps and invoke the poller."""
+    def _run_subscriber(self, message, monkeypatch, env_extra=None):
+        """Helper: patch all external deps and invoke the subscriber."""
         import importlib
         import function_app as fa
         importlib.reload(fa)
@@ -178,56 +161,27 @@ class TestServiceBusPoller:
         for k, v in env.items():
             monkeypatch.setenv(k, v)
 
-        # Build mock Service Bus hierarchy
-        mock_receiver = MagicMock()
-        mock_receiver.receive_messages.return_value = messages
-        mock_receiver.__enter__ = MagicMock(return_value=mock_receiver)
-        mock_receiver.__exit__ = MagicMock(return_value=False)
-
-        mock_sb_client = MagicMock()
-        mock_sb_client.get_subscription_receiver.return_value = mock_receiver
-        mock_sb_client.__enter__ = MagicMock(return_value=mock_sb_client)
-        mock_sb_client.__exit__ = MagicMock(return_value=False)
-
         mock_blob_client = MagicMock()
         mock_bsc_instance = MagicMock()
         mock_bsc_instance.get_blob_client.return_value = mock_blob_client
 
-        timer = MagicMock()
-        timer.past_due = False
-
         with (
-            patch.object(fa, "ServiceBusClient", return_value=mock_sb_client),
             patch.object(fa, "BlobServiceClient", return_value=mock_bsc_instance),
             patch.object(fa, "ManagedIdentityCredential"),
-            patch.object(fa, "ClientAssertionCredential"),
         ):
-            fa.service_bus_poller(timer)
+            fa.service_bus_subscriber(message)
 
-        return mock_receiver, mock_bsc_instance, mock_blob_client
+        return mock_bsc_instance, mock_blob_client
 
-    def test_happy_path_single_message(self, monkeypatch):
+    def test_happy_path_writes_blob(self, monkeypatch):
+        """A single message should result in exactly one blob upload."""
         msg = _make_sb_message()
-        receiver, _, _ = self._run_poller([msg], monkeypatch)
+        _, mock_blob_client = self._run_subscriber(msg, monkeypatch)
 
-        receiver.complete_message.assert_called_once_with(msg)
-        receiver.abandon_message.assert_not_called()
+        mock_blob_client.upload_blob.assert_called_once()
 
-    def test_happy_path_multiple_messages(self, monkeypatch):
-        messages = [_make_sb_message(message_id=f"msg-{i}") for i in range(3)]
-        receiver, _, _ = self._run_poller(messages, monkeypatch)
-
-        assert receiver.complete_message.call_count == 3
-        receiver.abandon_message.assert_not_called()
-
-    def test_empty_batch_no_errors(self, monkeypatch):
-        receiver, _, _ = self._run_poller([], monkeypatch)
-
-        receiver.complete_message.assert_not_called()
-        receiver.abandon_message.assert_not_called()
-
-    def test_blob_write_failure_abandons_message(self, monkeypatch):
-        """When blob write fails the message should be abandoned, not completed."""
+    def test_blob_write_failure_raises_exception(self, monkeypatch):
+        """When blob write fails the subscriber must re-raise so the runtime abandons the message."""
         import importlib
         import function_app as fa
         importlib.reload(fa)
@@ -238,122 +192,35 @@ class TestServiceBusPoller:
 
         msg = _make_sb_message()
 
-        mock_receiver = MagicMock()
-        mock_receiver.receive_messages.return_value = [msg]
-        mock_receiver.__enter__ = MagicMock(return_value=mock_receiver)
-        mock_receiver.__exit__ = MagicMock(return_value=False)
-
-        mock_sb_client = MagicMock()
-        mock_sb_client.get_subscription_receiver.return_value = mock_receiver
-        mock_sb_client.__enter__ = MagicMock(return_value=mock_sb_client)
-        mock_sb_client.__exit__ = MagicMock(return_value=False)
-
-        # Make blob upload raise
         mock_blob_client = MagicMock()
         mock_blob_client.upload_blob.side_effect = RuntimeError("disk full")
         mock_bsc_instance = MagicMock()
         mock_bsc_instance.get_blob_client.return_value = mock_blob_client
 
-        timer = MagicMock()
-        timer.past_due = False
-
         with (
-            patch.object(fa, "ServiceBusClient", return_value=mock_sb_client),
             patch.object(fa, "BlobServiceClient", return_value=mock_bsc_instance),
             patch.object(fa, "ManagedIdentityCredential"),
-            patch.object(fa, "ClientAssertionCredential"),
         ):
-            fa.service_bus_poller(timer)
+            with pytest.raises(RuntimeError, match="disk full"):
+                fa.service_bus_subscriber(msg)
 
-        mock_receiver.abandon_message.assert_called_once_with(msg)
-        mock_receiver.complete_message.assert_not_called()
-
-    def test_past_due_timer_still_processes(self, monkeypatch):
-        """A past-due timer should still process messages (just log a warning)."""
+    def test_missing_storage_env_var_raises(self, monkeypatch):
+        """Missing STORAGE_ACCOUNT_NAME must raise EnvironmentError."""
         import importlib
         import function_app as fa
         importlib.reload(fa)
 
         env = _base_env()
+        env.pop("STORAGE_ACCOUNT_NAME", None)
         for k, v in env.items():
             monkeypatch.setenv(k, v)
+        monkeypatch.delenv("STORAGE_ACCOUNT_NAME", raising=False)
 
         msg = _make_sb_message()
 
-        mock_receiver = MagicMock()
-        mock_receiver.receive_messages.return_value = [msg]
-        mock_receiver.__enter__ = MagicMock(return_value=mock_receiver)
-        mock_receiver.__exit__ = MagicMock(return_value=False)
-
-        mock_sb_client = MagicMock()
-        mock_sb_client.get_subscription_receiver.return_value = mock_receiver
-        mock_sb_client.__enter__ = MagicMock(return_value=mock_sb_client)
-        mock_sb_client.__exit__ = MagicMock(return_value=False)
-
-        mock_blob_client = MagicMock()
-        mock_bsc_instance = MagicMock()
-        mock_bsc_instance.get_blob_client.return_value = mock_blob_client
-
-        timer = MagicMock()
-        timer.past_due = True
-
         with (
-            patch.object(fa, "ServiceBusClient", return_value=mock_sb_client),
-            patch.object(fa, "BlobServiceClient", return_value=mock_bsc_instance),
+            patch.object(fa, "BlobServiceClient"),
             patch.object(fa, "ManagedIdentityCredential"),
-            patch.object(fa, "ClientAssertionCredential"),
         ):
-            fa.service_bus_poller(timer)
-
-        mock_receiver.complete_message.assert_called_once_with(msg)
-
-    def test_mixed_success_and_failure(self, monkeypatch):
-        """First message succeeds, second fails → first completed, second abandoned."""
-        import importlib
-        import function_app as fa
-        importlib.reload(fa)
-
-        env = _base_env()
-        for k, v in env.items():
-            monkeypatch.setenv(k, v)
-
-        msg_ok = _make_sb_message(message_id="ok-msg")
-        msg_fail = _make_sb_message(message_id="fail-msg")
-
-        mock_receiver = MagicMock()
-        mock_receiver.receive_messages.return_value = [msg_ok, msg_fail]
-        mock_receiver.__enter__ = MagicMock(return_value=mock_receiver)
-        mock_receiver.__exit__ = MagicMock(return_value=False)
-
-        mock_sb_client = MagicMock()
-        mock_sb_client.get_subscription_receiver.return_value = mock_receiver
-        mock_sb_client.__enter__ = MagicMock(return_value=mock_sb_client)
-        mock_sb_client.__exit__ = MagicMock(return_value=False)
-
-        # First blob client succeeds; second raises
-        good_blob = MagicMock()
-        bad_blob = MagicMock()
-        bad_blob.upload_blob.side_effect = RuntimeError("quota exceeded")
-
-        call_count = {"n": 0}
-
-        def blob_client_factory(container, blob):
-            call_count["n"] += 1
-            return good_blob if call_count["n"] == 1 else bad_blob
-
-        mock_bsc_instance = MagicMock()
-        mock_bsc_instance.get_blob_client.side_effect = blob_client_factory
-
-        timer = MagicMock()
-        timer.past_due = False
-
-        with (
-            patch.object(fa, "ServiceBusClient", return_value=mock_sb_client),
-            patch.object(fa, "BlobServiceClient", return_value=mock_bsc_instance),
-            patch.object(fa, "ManagedIdentityCredential"),
-            patch.object(fa, "ClientAssertionCredential"),
-        ):
-            fa.service_bus_poller(timer)
-
-        mock_receiver.complete_message.assert_called_once_with(msg_ok)
-        mock_receiver.abandon_message.assert_called_once_with(msg_fail)
+            with pytest.raises(EnvironmentError, match="STORAGE_ACCOUNT_NAME"):
+                fa.service_bus_subscriber(msg)
