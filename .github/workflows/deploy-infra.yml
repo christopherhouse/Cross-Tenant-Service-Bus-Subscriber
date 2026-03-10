@@ -1,0 +1,92 @@
+# deploy-infra.yml
+#
+# Deploys (or updates) the Azure infrastructure in Tenant A that hosts the
+# Cross-Tenant Service Bus Subscriber Function App.
+#
+# Trigger
+# ───────
+# • Push to main that touches infra/** or the workflow file itself
+# • Manual dispatch (workflow_dispatch) – useful for first-time setup and
+#   targeted re-deployments
+#
+# Required GitHub Secrets
+# ───────────────────────
+# AZURE_CLIENT_ID          – Client ID of the federated-credential service principal
+#                            used by this workflow to authenticate with Azure (OIDC)
+# AZURE_TENANT_ID          – Entra Tenant ID of Tenant A (the hosting tenant)
+# AZURE_SUBSCRIPTION_ID    – Azure Subscription ID in Tenant A
+#
+# Required GitHub Variables (Actions > Variables)
+# ─────────────────────────────────────────────────────────────────────────────
+# AZURE_RG_NAME             – Resource group name (must already exist, or see
+#                             "Create resource group" step below)
+# AZURE_LOCATION            – Azure region, e.g. eastus
+# ENVIRONMENT_NAME          – dev | test | prod
+# WORKLOAD_NAME             – short name prefix, e.g. sbsub
+#
+# Cross-tenant Service Bus (Tenant B) – GitHub Variables
+# ─────────────────────────────────────────────────────────────────────────────
+# CROSS_TENANT_SB_NAMESPACE          – e.g. mybus.servicebus.windows.net
+# CROSS_TENANT_TOPIC_NAME
+# CROSS_TENANT_SUBSCRIPTION_NAME
+# CROSS_TENANT_TENANT_ID
+# CROSS_TENANT_APP_CLIENT_ID
+
+name: Deploy Infrastructure
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'infra/**'
+      - '.github/workflows/deploy-infra.yml'
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # required for OIDC federated credential login
+  contents: read
+
+jobs:
+  deploy-bicep:
+    name: Deploy Bicep to Azure
+    runs-on: ubuntu-latest
+    environment: ${{ vars.ENVIRONMENT_NAME || 'dev' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Create resource group (idempotent)
+        uses: azure/CLI@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            az group create \
+              --name     "${{ vars.AZURE_RG_NAME }}" \
+              --location "${{ vars.AZURE_LOCATION }}"
+
+      - name: Deploy Bicep
+        uses: azure/arm-deploy@v2
+        with:
+          scope:             resourcegroup
+          resourceGroupName: ${{ vars.AZURE_RG_NAME }}
+          subscriptionId:    ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          template:          ./infra/main.bicep
+          parameters: >-
+            environmentName=${{ vars.ENVIRONMENT_NAME || 'dev' }}
+            workloadName=${{ vars.WORKLOAD_NAME || 'sbsub' }}
+            crossTenantServiceBusNamespace=${{ vars.CROSS_TENANT_SB_NAMESPACE }}
+            crossTenantTopicName=${{ vars.CROSS_TENANT_TOPIC_NAME }}
+            crossTenantSubscriptionName=${{ vars.CROSS_TENANT_SUBSCRIPTION_NAME }}
+            crossTenantTenantId=${{ vars.CROSS_TENANT_TENANT_ID }}
+            crossTenantAppClientId=${{ vars.CROSS_TENANT_APP_CLIENT_ID }}
+          deploymentName: infra-${{ github.run_number }}
+          failOnStdErr:   false
