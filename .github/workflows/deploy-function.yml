@@ -53,6 +53,12 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ vars.ENVIRONMENT_NAME || 'dev' }}
 
+    env:
+      # Derive ACR name and image name once so every step references the same
+      # value and future renames only require a single-line change.
+      ACR_NAME:   "cr${{ vars.WORKLOAD_NAME || 'sbsub' }}${{ vars.ENVIRONMENT_NAME || 'dev' }}"
+      IMAGE_NAME: "func-${{ vars.WORKLOAD_NAME || 'sbsub' }}-${{ vars.ENVIRONMENT_NAME || 'dev' }}"
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -86,8 +92,8 @@ jobs:
           azcliversion: latest
           inlineScript: |
             az acr build \
-              --registry "cr${{ vars.WORKLOAD_NAME || 'sbsub' }}${{ vars.ENVIRONMENT_NAME || 'dev' }}" \
-              --image "func-${{ vars.WORKLOAD_NAME || 'sbsub' }}-${{ vars.ENVIRONMENT_NAME || 'dev' }}:${{ github.sha }}" \
+              --registry "${{ env.ACR_NAME }}" \
+              --image "${{ env.IMAGE_NAME }}:${{ github.sha }}" \
               src/function_app
 
       # Point the Function App at the newly built image (SHA tag).
@@ -100,4 +106,4 @@ jobs:
             az functionapp config container set \
               --resource-group "${{ vars.AZURE_RG_NAME }}" \
               --name "${{ vars.AZURE_FUNCTION_APP_NAME }}" \
-              --image "cr${{ vars.WORKLOAD_NAME || 'sbsub' }}${{ vars.ENVIRONMENT_NAME || 'dev' }}.azurecr.io/func-${{ vars.WORKLOAD_NAME || 'sbsub' }}-${{ vars.ENVIRONMENT_NAME || 'dev' }}:${{ github.sha }}"
+              --image "${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}"
