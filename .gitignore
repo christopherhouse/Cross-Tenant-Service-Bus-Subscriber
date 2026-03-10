@@ -202,7 +202,7 @@ cython_debug/
 .cursorindexingignore
 
 # Bicep compiled output
-infra/*.json
+infra/**/*.json
 
 # Marimo
 marimo/_static/
