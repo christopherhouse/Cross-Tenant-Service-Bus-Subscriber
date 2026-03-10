@@ -42,7 +42,7 @@ understand the motivation and explore the best approach together.
 
 | Tool | Minimum version | Install |
 |---|---|---|
-| Python | 3.11 | [python.org](https://www.python.org/downloads/) |
+| Python | 3.13 | [python.org](https://www.python.org/downloads/) |
 | Azure Functions Core Tools | v4 | [docs](https://learn.microsoft.com/azure/azure-functions/functions-run-local) |
 | Azure CLI | latest | [docs](https://learn.microsoft.com/cli/azure/install-azure-cli) |
 | Bicep CLI | latest | `az bicep install` |

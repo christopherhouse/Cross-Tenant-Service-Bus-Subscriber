@@ -12,7 +12,7 @@
   • Storage Account                  – AzureWebJobsStorage + message blob sink
   • Blob Container                   – target container for received messages
   • App Service Plan                 – Flex Consumption (serverless Python)
-  • Function App                     – Python 3.11, v2 programming model
+  • Function App                     – Python 3.13, v2 programming model
   • Application Insights workspace   – diagnostics
   • Log Analytics workspace          – backing store for App Insights
 */

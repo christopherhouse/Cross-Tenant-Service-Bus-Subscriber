@@ -3,7 +3,7 @@
 [![Deploy Function](https://github.com/christopherhouse/Cross-Tenant-Service-Bus-Subscriber/actions/workflows/deploy-function.yml/badge.svg)](https://github.com/christopherhouse/Cross-Tenant-Service-Bus-Subscriber/actions/workflows/deploy-function.yml)
 [![Deploy Infrastructure](https://github.com/christopherhouse/Cross-Tenant-Service-Bus-Subscriber/actions/workflows/deploy-infra.yml/badge.svg)](https://github.com/christopherhouse/Cross-Tenant-Service-Bus-Subscriber/actions/workflows/deploy-infra.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/downloads/)
 [![Azure Functions v4](https://img.shields.io/badge/Azure%20Functions-v4-blue)](https://learn.microsoft.com/azure/azure-functions/)
 
 An **Azure Function (Python)** that is triggered directly by new messages
@@ -102,7 +102,7 @@ federation needed).
 
 | Tool | Version |
 |---|---|
-| Python | 3.11+ |
+| Python | 3.13+ |
 | Azure Functions Core Tools | v4 |
 | Azure CLI | latest |
 | Bicep CLI | latest (`az bicep install`) |
