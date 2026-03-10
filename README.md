@@ -15,29 +15,34 @@ writes each received message payload as a JSON blob to Azure Blob Storage.
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│ Tenant A  (Function hosting tenant)                  │
-│                                                      │
-│  ┌──────────────────────┐    ┌───────────────────────┐  │
-│  │  Azure Function      │    │  Storage Account      │  │
-│  │  (timer, every 1 min)│───▶│  /sb-messages/<date>/ │  │
-│  └──────────┬───────────┘    └───────────────────────┘  │
-│             │ User Assigned MI (UAMI)                 │
-└─────────────┼───────────────────────────────────────┘
-              │
-              │  ClientAssertionCredential
-              │  UAMI token (api://AzureADTokenExchange)
-              │  → Tenant B App Registration (federated credential)
-              │  → Tenant B token → Service Bus Data Receiver
-              ▼
-┌─────────────────────────────────────────────────────┐
-│ Tenant B  (Service Bus tenant)                       │
-│                                                      │
-│  ┌─────────────────────────────────────────────┐    │
-│  │ Service Bus Namespace                        │    │
-│  │  └─ Topic ─▶ Subscription                   │    │
-│  └─────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│ Tenant A  (Function hosting tenant)                           │
+│                                                               │
+│  ┌────────────────────────┐    ┌──────────────────────────┐  │
+│  │  Azure Container       │    │  Storage Account         │  │
+│  │  Registry (ACR)        │    │  /sb-messages/<date>/    │  │
+│  └────────────┬───────────┘    └──────────────────────────┘  │
+│    pull image │ (UAMI / AcrPull)              ▲              │
+│               ▼                               │ write blobs  │
+│  ┌────────────────────────────────────────────┴───────────┐  │
+│  │  Azure Function  (timer, every 1 min)                  │  │
+│  └─────────────────────────┬──────────────────────────────┘  │
+│                             │ User Assigned MI (UAMI)         │
+└─────────────────────────────┼────────────────────────────────┘
+                              │
+                              │  ClientAssertionCredential
+                              │  UAMI token (api://AzureADTokenExchange)
+                              │  → Tenant B App Registration (federated credential)
+                              │  → Tenant B token → Service Bus Data Receiver
+                              ▼
+┌──────────────────────────────────────────────────────────────┐
+│ Tenant B  (Service Bus tenant)                                │
+│                                                               │
+│  ┌──────────────────────────────────────────────────────┐    │
+│  │ Service Bus Namespace                                 │    │
+│  │  └─ Topic ─▶ Subscription                            │    │
+│  └──────────────────────────────────────────────────────┘    │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ### Authentication model
@@ -72,6 +77,8 @@ A **Tenant B administrator** must:
 .
 ├── src/
 │   └── function_app/
+│       ├── Dockerfile                      # Container image (mcr.microsoft.com/azure-functions/python:4-python3.13)
+│       ├── .dockerignore                   # Docker build context exclusions
 │       ├── function_app.py                 # Timer trigger, cross-tenant Service Bus poll, blob write
 │       ├── host.json                       # Azure Functions host config
 │       ├── requirements.txt                # Python dependencies
@@ -84,6 +91,7 @@ A **Tenant B administrator** must:
 │       ├── storage-account.bicep
 │       ├── app-service-plan.bicep
 │       ├── function-app.bicep
+│       ├── container-registry.bicep        # Azure Container Registry (Basic SKU) + AcrPull role
 │       ├── log-analytics-workspace.bicep
 │       └── app-insights.bicep
 ├── .github/
@@ -94,7 +102,7 @@ A **Tenant B administrator** must:
 │   │   └── cicd-workflow.md                # CI/CD specialist agent
 │   └── workflows/
 │       ├── deploy-infra.yml                # Bicep deployment workflow
-│       └── deploy-function.yml             # Function code deployment workflow
+│       └── deploy-function.yml             # Container build and deployment workflow
 └── tests/
     └── test_function_app.py                # pytest unit tests
 ```
@@ -103,12 +111,13 @@ A **Tenant B administrator** must:
 
 ## Prerequisites
 
-| Tool | Version |
-|---|---|
-| Python | 3.13+ |
-| Azure Functions Core Tools | v4 |
-| Azure CLI | latest |
-| Bicep CLI | latest (`az bicep install`) |
+| Tool | Version | Notes |
+|---|---|---|
+| Python | 3.13+ | Required for running tests locally |
+| Azure CLI | latest | Required for all deployments |
+| Bicep CLI | latest (`az bicep install`) | Required for infrastructure deployments |
+| Azure Functions Core Tools | v4 | Optional — for `func start` local development only |
+| Docker | latest | Optional — for building and running the container locally; CI/CD uses `az acr build` (no local Docker daemon required) |
 
 ---
 
@@ -152,18 +161,18 @@ Add a **Federated Credential** on the App Registration for GitHub OIDC:
 
 **Variables**:
 
-| Variable | Example |
-|---|---|
-| `AZURE_RG_NAME` | `rg-sbsub-dev` |
-| `AZURE_LOCATION` | `eastus` |
-| `ENVIRONMENT_NAME` | `dev` |
-| `WORKLOAD_NAME` | `sbsub` |
-| `SERVICE_BUS_FQNS` | `mybus.servicebus.windows.net` |
-| `CROSS_TENANT_TENANT_ID` | Entra Tenant ID of Tenant B |
-| `CROSS_TENANT_APP_CLIENT_ID` | Client ID of the App Registration in Tenant B |
-| `CROSS_TENANT_TOPIC_NAME` | `orders` |
-| `CROSS_TENANT_SUBSCRIPTION_NAME` | `fn-subscriber` |
-| `AZURE_FUNCTION_APP_NAME` | `func-sbsub-dev` |
+| Variable | Example | Notes |
+|---|---|---|
+| `AZURE_RG_NAME` | `rg-sbsub-dev` | |
+| `AZURE_LOCATION` | `eastus` | Used by `deploy-infra.yml` |
+| `ENVIRONMENT_NAME` | `dev` | |
+| `WORKLOAD_NAME` | `sbsub` | Used to derive ACR name (`cr<workload><env>`) and image name (`func-<workload>-<env>`) |
+| `CROSS_TENANT_SB_NAMESPACE` | `mybus.servicebus.windows.net` | Fully-qualified Service Bus namespace hostname; used by `deploy-infra.yml` |
+| `CROSS_TENANT_TENANT_ID` | Entra Tenant ID of Tenant B | |
+| `CROSS_TENANT_APP_CLIENT_ID` | Client ID of the App Registration in Tenant B | |
+| `CROSS_TENANT_TOPIC_NAME` | `orders` | |
+| `CROSS_TENANT_SUBSCRIPTION_NAME` | `fn-subscriber` | |
+| `AZURE_FUNCTION_APP_NAME` | `func-sbsub-dev` | |
 
 ### 3 – Set up cross-tenant access in Tenant B
 
@@ -221,18 +230,39 @@ granting the UAMI access to the Service Bus namespace in Tenant B (step 3 above)
 
 ### Deploy function code
 
+The function runs as a Docker container pulled from Azure Container Registry.
+The CI/CD workflow uses **ACR Tasks** (`az acr build`) so no local Docker
+daemon is required on the runner.
+
 ```bash
-# Manually via Azure Functions Core Tools
-cd src/function_app
-func azure functionapp publish func-sbsub-dev
+# Derive names (replace placeholders with your values)
+ACR_NAME="cr<workloadname><environmentname>"   # e.g. crsbsubdev  (no hyphens — alphanumeric only)
+IMAGE_NAME="func-<workload-name>-<environment-name>"  # e.g. func-sbsub-dev
+RG_NAME="<resource-group-name>"
+FUNC_APP_NAME="<function-app-name>"
+
+# 1. Build the container image inside ACR Tasks and push it
+az acr build \
+  --registry "$ACR_NAME" \
+  --image "$IMAGE_NAME:latest" \
+  src/function_app
+
+# 2. Update the Function App to pull the new image
+az functionapp config container set \
+  --resource-group "$RG_NAME" \
+  --name "$FUNC_APP_NAME" \
+  --image "$ACR_NAME.azurecr.io/$IMAGE_NAME:latest"
 ```
 
 Or push a change to `src/function_app/**` on `main` to trigger the
-`.github/workflows/deploy-function.yml` workflow automatically.
+`.github/workflows/deploy-function.yml` workflow automatically.  The workflow
+tags images with the commit SHA for full traceability.
 
 ---
 
 ## Local development
+
+### Option A — Azure Functions Core Tools (`func start`)
 
 ```bash
 # 1. Install dependencies
@@ -246,6 +276,32 @@ cp local.settings.json.template local.settings.json
 # 3. Start the function locally
 func start
 ```
+
+### Option B — Docker
+
+`local.settings.json` is a JSON file, so you must first extract the `Values`
+block into a `.env` file (KEY=VALUE, one per line):
+
+```bash
+# Requires jq (https://jqlang.github.io/jq/)
+jq -r '.Values | to_entries[] | "\(.key)=\(.value)"' \
+  src/function_app/local.settings.json > src/function_app/.env
+```
+
+Then build and run the container:
+
+```bash
+# 1. Build the container image locally
+docker build -t func-sbsub-local src/function_app/
+
+# 2. Run the container with the extracted settings
+docker run -p 7071:80 \
+  --env-file src/function_app/.env \
+  func-sbsub-local
+```
+
+> **Note**: Add `src/function_app/.env` to `.gitignore` — it contains real
+> credentials and must never be committed.
 
 > **Note**: The UAMI is only available when running inside Azure. For local
 > testing, populate `local.settings.json` with all `CROSS_TENANT_*` and
@@ -307,6 +363,8 @@ Global repository context and conventions are defined in
   and OIDC.
 - Storage access uses identity-based `AzureWebJobsStorage__accountName` (no
   connection string).
+- ACR pull uses UAMI-based managed identity (`acrUseManagedIdentityCreds: true`);
+  no registry credentials are stored in app settings or source code.
 - FTPS is disabled; minimum TLS 1.2 enforced on the Function App.
 - Blob container public access is disabled.
 
