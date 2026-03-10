@@ -204,6 +204,9 @@ cython_debug/
 # Bicep compiled output
 infra/**/*.json
 
+# Azure Functions local package directory (populated during CI deployment)
+.python_packages/
+
 # Marimo
 marimo/_static/
 marimo/_lsp/
