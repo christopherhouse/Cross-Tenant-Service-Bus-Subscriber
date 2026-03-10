@@ -448,7 +448,7 @@ class TestServiceBusSubscriber:
             patch.object(fa, "BlobServiceClient"),
             patch.object(fa, "_build_service_bus_credential"),
             patch.object(fa, "_build_storage_credential"),
-            caplog.at_level(logging.WARNING),
+            caplog.at_level(logging.WARNING, logger="function_app"),
         ):
             fa.service_bus_subscriber(_make_timer(past_due=True))
 
@@ -499,3 +499,77 @@ class TestServiceBusSubscriber:
         receiver.receive_messages.assert_called_once_with(
             max_message_count=42, max_wait_time=3.0
         )
+
+
+# ── Tests: _log_token_claims ─────────────────────────────────────────────────
+
+def _make_fake_jwt(claims: dict) -> str:
+    """Build a fake JWT (header.payload.signature) from a claims dict."""
+    import base64 as _b64
+    header = _b64.urlsafe_b64encode(b'{"alg":"none"}').rstrip(b"=").decode()
+    payload = _b64.urlsafe_b64encode(
+        json.dumps(claims).encode()
+    ).rstrip(b"=").decode()
+    return f"{header}.{payload}.fakesig"
+
+
+class TestLogTokenClaims:
+    def test_logs_key_claims_at_info(self, caplog):
+        """A valid JWT must produce an INFO log containing all key claims."""
+        import importlib
+        import logging
+        import function_app as fa
+        importlib.reload(fa)
+
+        claims = {
+            "iss": "https://login.microsoftonline.com/tenant-a/v2.0",
+            "aud": "api://AzureADTokenExchange",
+            "sub": "uami-principal-id",
+            "oid": "object-id-123",
+            "tid": "tenant-a-id",
+            "appid": "app-client-id",
+            "iat": 1700000000,
+            "nbf": 1700000000,
+            "exp": 1700003600,
+        }
+        token = _make_fake_jwt(claims)
+
+        with caplog.at_level(logging.INFO, logger="function_app"):
+            fa._log_token_claims(token, "test")
+
+        assert len(caplog.records) == 1
+        msg = caplog.records[0].message
+        assert "iss: https://login.microsoftonline.com/tenant-a/v2.0" in msg
+        assert "aud: api://AzureADTokenExchange" in msg
+        assert "sub: uami-principal-id" in msg
+        assert "tid: tenant-a-id" in msg
+        assert "appid: app-client-id" in msg
+
+    def test_malformed_token_logs_warning_no_raise(self, caplog):
+        """A non-JWT string must log a warning and must NOT raise."""
+        import importlib
+        import logging
+        import function_app as fa
+        importlib.reload(fa)
+
+        with caplog.at_level(logging.WARNING, logger="function_app"):
+            fa._log_token_claims("not-a-jwt", "bad")
+
+        assert any("does not look like a JWT" in r.message for r in caplog.records)
+
+    def test_missing_claims_logs_gracefully(self, caplog):
+        """A JWT with no standard claims must still log without error."""
+        import importlib
+        import logging
+        import function_app as fa
+        importlib.reload(fa)
+
+        token = _make_fake_jwt({"custom": "value"})
+
+        with caplog.at_level(logging.INFO, logger="function_app"):
+            fa._log_token_claims(token, "sparse")
+
+        assert len(caplog.records) == 1
+        msg = caplog.records[0].message
+        assert "iss: n/a" in msg
+        assert "aud: n/a" in msg
