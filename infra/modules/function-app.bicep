@@ -65,6 +65,9 @@ param acrLoginServer                 string
 @description('Container image name to pull from ACR (e.g. func-sbsub).')
 param imageName                      string
 
+@description('Container image tag to deploy. Defaults to "latest"; set to a specific SHA or semver tag for reproducible deployments.')
+param imageTag                       string = 'latest'
+
 resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
   name:     name
   location: location
@@ -77,7 +80,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
     serverFarmId: appServicePlanId
     reserved:     true
     siteConfig: {
-      linuxFxVersion:              'DOCKER|${acrLoginServer}/${imageName}:latest'
+      linuxFxVersion:              'DOCKER|${acrLoginServer}/${imageName}:${imageTag}'
       acrUseManagedIdentityCreds:  true
       acrUserManagedIdentityID:    uamiClientId
       appSettings: [
