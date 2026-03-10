@@ -1,0 +1,26 @@
+# Exclude local settings (contains secrets)
+local.settings.json
+
+# Exclude Python cache and virtual environments
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# Exclude test files
+tests/
+
+# Exclude git files
+.git/
+.gitignore
+
+# Exclude local pip packages installed for deployment
+.python_packages/
+
+# Exclude IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo

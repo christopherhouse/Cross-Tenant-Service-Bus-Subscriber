@@ -1,7 +1,8 @@
 /*
   modules/app-service-plan.bicep
-  Provisions a Flex Consumption (Y1/Serverless) App Service Plan for the
-  Azure Function App.
+  Provisions an Elastic Premium (EP1) App Service Plan for the Azure Function
+  App.  EP1 is required when running containerised Functions pulled from ACR;
+  the Consumption (Y1/Dynamic) plan does not support custom Docker containers.
 */
 
 param name     string
@@ -11,8 +12,8 @@ resource appServicePlan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name:     name
   location: location
   sku: {
-    name: 'Y1'
-    tier: 'Dynamic'
+    name: 'EP1'
+    tier: 'ElasticPremium'
   }
   properties: {
     reserved: true  // required for Linux

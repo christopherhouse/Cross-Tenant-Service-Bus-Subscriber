@@ -1,6 +1,9 @@
 # deploy-function.yml
 #
-# Builds and deploys the Python Azure Function App code to Azure.
+# Builds and deploys the Python Azure Function App as a container image to
+# Azure Container Registry (ACR), then updates the Function App to use the
+# new image.  The Docker image is built inside ACR Tasks (az acr build) so
+# no local Docker daemon is required on the runner.
 #
 # Trigger
 # ───────
@@ -16,9 +19,18 @@
 #
 # Required GitHub Variables
 # ─────────────────────────
+# AZURE_RG_NAME             – resource group that contains the Function App
 # AZURE_FUNCTION_APP_NAME   – name of the deployed Function App (output from
 #                             infra deployment, e.g. func-sbsub-dev)
-# ENVIRONMENT_NAME
+# ENVIRONMENT_NAME          – deployment environment label (dev | test | prod)
+# WORKLOAD_NAME             – short workload prefix used to derive the image
+#                             name (e.g. sbsub)
+# ACR_NAME                  – name of the Azure Container Registry (e.g. crsbsubdev)
+#
+# Derived (not separate variables)
+# ────────────────────────────────
+# Image name: func-<WORKLOAD_NAME>-<ENVIRONMENT_NAME>   (e.g. func-sbsub-dev)
+# Image tag : ${{ github.sha }} (short commit SHA used for traceability)
 
 name: Deploy Function App
 
@@ -37,9 +49,15 @@ permissions:
 
 jobs:
   build-and-deploy:
-    name: Build & Deploy Python Function
+    name: Build & Deploy Python Function (Container)
     runs-on: ubuntu-latest
     environment: ${{ vars.ENVIRONMENT_NAME || 'dev' }}
+
+    env:
+      # ACR_NAME comes directly from the GitHub Variable set in Actions > Variables.
+      # IMAGE_NAME is derived from WORKLOAD_NAME and ENVIRONMENT_NAME.
+      ACR_NAME:   "${{ vars.ACR_NAME }}"
+      IMAGE_NAME: "func-${{ vars.WORKLOAD_NAME || 'sbsub' }}-${{ vars.ENVIRONMENT_NAME || 'dev' }}"
 
     steps:
       - name: Checkout repository
@@ -65,15 +83,27 @@ jobs:
           tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Install Python dependencies for deployment
-        run: |
-          pushd src/function_app
-          python -m pip install --target=".python_packages/lib/site-packages" --upgrade -r requirements.txt
-          popd
-
-      - name: Deploy to Azure Functions
-        uses: Azure/functions-action@v1
+      # Build the container image inside ACR Tasks – no local Docker daemon needed.
+      # The build context (src/function_app) is uploaded to ACR and built there.
+      # Image is tagged with the commit SHA for traceability and immutability.
+      - name: Build and push container image to ACR
+        uses: azure/CLI@v2
         with:
-          app-name:                    ${{ vars.AZURE_FUNCTION_APP_NAME }}
-          package:                     src/function_app
-          scm-do-build-during-deployment: false
+          azcliversion: latest
+          inlineScript: |
+            az acr build \
+              --registry "${{ env.ACR_NAME }}" \
+              --image "${{ env.IMAGE_NAME }}:${{ github.sha }}" \
+              src/function_app
+
+      # Point the Function App at the newly built image (SHA tag).
+      # Azure pulls the image from ACR and restarts the app automatically.
+      - name: Update Function App container image
+        uses: azure/CLI@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            az functionapp config container set \
+              --resource-group "${{ vars.AZURE_RG_NAME }}" \
+              --name "${{ vars.AZURE_FUNCTION_APP_NAME }}" \
+              --image "${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}"
