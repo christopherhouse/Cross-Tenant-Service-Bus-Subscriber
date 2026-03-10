@@ -43,8 +43,11 @@ def _base_env(extra: dict | None = None) -> dict:
     """Return a minimal set of required environment variables."""
     env = {
         "SERVICE_BUS_CONNECTION__fullyQualifiedNamespace": "test-ns.servicebus.windows.net",
-        "SERVICE_BUS_CONNECTION__credential": "managedidentity",
-        "SERVICE_BUS_CONNECTION__clientId": "uami-client-id",
+        "SERVICE_BUS_CONNECTION__credential": "managedidentityasfederatedidentity",
+        "SERVICE_BUS_CONNECTION__azureCloud": "public",
+        "SERVICE_BUS_CONNECTION__clientId": "app-reg-client-id-in-tenant-b",
+        "SERVICE_BUS_CONNECTION__tenantId": "tenant-b-id",
+        "SERVICE_BUS_CONNECTION__managedIdentityClientId": "uami-client-id",
         "CROSS_TENANT_TOPIC_NAME": "test-topic",
         "CROSS_TENANT_SUBSCRIPTION_NAME": "test-sub",
         "USER_ASSIGNED_MI_CLIENT_ID": "uami-client-id",

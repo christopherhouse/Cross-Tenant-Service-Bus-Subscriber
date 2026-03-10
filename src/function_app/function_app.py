@@ -15,27 +15,47 @@ Both the Service Bus trigger and the Storage Account use the UAMI:
 
   UAMI (Tenant A)
     │
-    ├─ Service Bus trigger (identity-based connection via Functions runtime)
+    ├─ Service Bus trigger (cross-tenant federated identity via Functions runtime)
     │    SERVICE_BUS_CONNECTION__fullyQualifiedNamespace
-    │    SERVICE_BUS_CONNECTION__credential = "managedidentity"
-    │    SERVICE_BUS_CONNECTION__clientId   = <UAMI client ID>
-    │    Required RBAC role: Azure Service Bus Data Receiver
+    │    SERVICE_BUS_CONNECTION__credential          = "managedidentityasfederatedidentity"
+    │    SERVICE_BUS_CONNECTION__azureCloud          = "public"
+    │    SERVICE_BUS_CONNECTION__clientId            = <App Registration client ID in Tenant B>
+    │    SERVICE_BUS_CONNECTION__tenantId            = <Tenant B ID>
+    │    SERVICE_BUS_CONNECTION__managedIdentityClientId = <UAMI client ID>
+    │
+    │    Token-exchange flow:
+    │      UAMI token (Tenant A) → federated credential on App Registration (Tenant B)
+    │      → Tenant B token → Service Bus Data Receiver access on Tenant B namespace
     │
     └─ ManagedIdentityCredential(client_id=UAMI)
          │
          ▼
        BlobServiceClient (Tenant A Storage Account)
 
+Important: On Consumption and Flex Consumption plans, configuring a trigger
+with a cross-tenant connection disables platform-based auto-scaling for that
+trigger (see https://aka.ms/functions-cross-tenant-connections).  The function
+still fires; manual or metric-based scaling rules can compensate if needed.
+
 Required application settings
 ──────────────────────────────
 SERVICE_BUS_CONNECTION__fullyQualifiedNamespace
-                                – FQDN of the Service Bus namespace, e.g.
-                                  mybus.servicebus.windows.net
+                                – FQDN of the Service Bus namespace in Tenant B,
+                                  e.g. mybus.servicebus.windows.net
 SERVICE_BUS_CONNECTION__credential
-                                – Must be set to "managedidentity"
+                                – Must be "managedidentityasfederatedidentity"
+                                  for cross-tenant access
+SERVICE_BUS_CONNECTION__azureCloud
+                                – Cloud environment; use "public" for Azure
+                                  Public Cloud
 SERVICE_BUS_CONNECTION__clientId
-                                – Client ID of the UAMI (same value as
-                                  USER_ASSIGNED_MI_CLIENT_ID)
+                                – Client ID of the multitenant App Registration
+                                  in Tenant B (crossTenantAppClientId)
+SERVICE_BUS_CONNECTION__tenantId
+                                – Entra Tenant ID of Tenant B
+SERVICE_BUS_CONNECTION__managedIdentityClientId
+                                – Client ID of the UAMI in Tenant A (same
+                                  value as USER_ASSIGNED_MI_CLIENT_ID)
 CROSS_TENANT_TOPIC_NAME         – Service Bus topic name
 CROSS_TENANT_SUBSCRIPTION_NAME  – Service Bus subscription name
 USER_ASSIGNED_MI_CLIENT_ID      – Client ID of the UAMI in Tenant A
