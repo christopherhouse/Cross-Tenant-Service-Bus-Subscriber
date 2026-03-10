@@ -65,9 +65,14 @@ jobs:
           tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Install Python dependencies for deployment
+        run: |
+          pushd src/function_app
+          python -m pip install --target=".python_packages/lib/site-packages" --upgrade -r requirements.txt
+          popd
+
       - name: Deploy to Azure Functions
         uses: Azure/functions-action@v1
         with:
           app-name:    ${{ vars.AZURE_FUNCTION_APP_NAME }}
           package:     src/function_app
-          remote-build: true
