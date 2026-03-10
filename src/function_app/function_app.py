@@ -3,35 +3,39 @@ Azure Function App: Cross-Tenant Service Bus Subscriber
 
 This function is triggered directly by new messages arriving on a Service Bus
 topic subscription. The Azure Functions runtime manages the Service Bus
-connection and message receipt; there is no polling loop in this code.
+connection and message receipt using identity-based authentication; there is
+no polling loop in this code.
 
 Received message payloads are written as individual blobs to Azure Blob
-Storage in Tenant A using a User Assigned Managed Identity (UAMI).
+Storage in Tenant A using the same User Assigned Managed Identity (UAMI).
 
-Same-tenant storage auth
-─────────────────────────
-ManagedIdentityCredential(client_id=UAMI)
-  │
-  ▼
-BlobServiceClient (Tenant A Storage Account)
+Authentication overview
+────────────────────────
+Both the Service Bus trigger and the Storage Account use the UAMI:
+
+  UAMI (Tenant A)
+    │
+    ├─ Service Bus trigger (identity-based connection via Functions runtime)
+    │    SERVICE_BUS_CONNECTION__fullyQualifiedNamespace
+    │    SERVICE_BUS_CONNECTION__credential = "managedidentity"
+    │    SERVICE_BUS_CONNECTION__clientId   = <UAMI client ID>
+    │    Required RBAC role: Azure Service Bus Data Receiver
+    │
+    └─ ManagedIdentityCredential(client_id=UAMI)
+         │
+         ▼
+       BlobServiceClient (Tenant A Storage Account)
 
 Required application settings
 ──────────────────────────────
-SERVICE_BUS_CONNECTION_STRING   – Service Bus connection string (app setting).
-                                  NOTE: The Azure Functions Service Bus trigger
-                                  binding requires a connection string (or an
-                                  identity-based "__fullyQualifiedNamespace"
-                                  setting) to be provided as an *app setting
-                                  name*, not a credential object.  A connection
-                                  string is used here so the Functions host can
-                                  manage message receipt on behalf of the
-                                  function.  For production deployments, prefer
-                                  scoping this to a Send/Listen-only SAS policy
-                                  rather than RootManageSharedAccessKey, or
-                                  switch to the identity-based variant by
-                                  setting SERVICE_BUS_CONNECTION_STRING__fullyQualifiedNamespace
-                                  and granting the UAMI the Azure Service Bus
-                                  Data Receiver role on the namespace.
+SERVICE_BUS_CONNECTION__fullyQualifiedNamespace
+                                – FQDN of the Service Bus namespace, e.g.
+                                  mybus.servicebus.windows.net
+SERVICE_BUS_CONNECTION__credential
+                                – Must be set to "managedidentity"
+SERVICE_BUS_CONNECTION__clientId
+                                – Client ID of the UAMI (same value as
+                                  USER_ASSIGNED_MI_CLIENT_ID)
 CROSS_TENANT_TOPIC_NAME         – Service Bus topic name
 CROSS_TENANT_SUBSCRIPTION_NAME  – Service Bus subscription name
 USER_ASSIGNED_MI_CLIENT_ID      – Client ID of the UAMI in Tenant A
@@ -145,7 +149,7 @@ _SB_SUBSCRIPTION = _opt_env("CROSS_TENANT_SUBSCRIPTION_NAME", "")
     arg_name="message",
     topic_name=_SB_TOPIC,
     subscription_name=_SB_SUBSCRIPTION,
-    connection="SERVICE_BUS_CONNECTION_STRING",
+    connection="SERVICE_BUS_CONNECTION",
 )
 def service_bus_subscriber(message: func.ServiceBusMessage) -> None:
     """

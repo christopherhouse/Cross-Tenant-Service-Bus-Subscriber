@@ -42,11 +42,9 @@ def _make_sb_message(
 def _base_env(extra: dict | None = None) -> dict:
     """Return a minimal set of required environment variables."""
     env = {
-        "SERVICE_BUS_CONNECTION_STRING": (
-            "Endpoint=sb://test-ns.servicebus.windows.net/;"
-            "SharedAccessKeyName=ListenOnlyPolicy;"
-            "SharedAccessKey=test-key=="
-        ),
+        "SERVICE_BUS_CONNECTION__fullyQualifiedNamespace": "test-ns.servicebus.windows.net",
+        "SERVICE_BUS_CONNECTION__credential": "managedidentity",
+        "SERVICE_BUS_CONNECTION__clientId": "uami-client-id",
         "CROSS_TENANT_TOPIC_NAME": "test-topic",
         "CROSS_TENANT_SUBSCRIPTION_NAME": "test-sub",
         "USER_ASSIGNED_MI_CLIENT_ID": "uami-client-id",
