@@ -1,66 +1,61 @@
 """
 Azure Function App: Cross-Tenant Service Bus Subscriber
 
-This function is triggered directly by new messages arriving on a Service Bus
-topic subscription. The Azure Functions runtime manages the Service Bus
-connection and message receipt using identity-based authentication; there is
-no polling loop in this code.
-
-Received message payloads are written as individual blobs to Azure Blob
-Storage in Tenant A using the same User Assigned Managed Identity (UAMI).
+A timer-triggered function that polls a Service Bus topic subscription in a
+remote Entra tenant (Tenant B) and persists each message payload as a JSON
+blob in Azure Blob Storage in the local tenant (Tenant A).
 
 Authentication overview
 ────────────────────────
-Both the Service Bus trigger and the Storage Account use the UAMI:
+Cross-tenant Service Bus access uses an explicit token-exchange chain so that
+the correct Tenant B token is presented to Service Bus — avoiding the
+``InvalidIssuer`` error produced by the legacy
+``managedidentityasfederatedidentity`` runtime credential:
 
   UAMI (Tenant A)
     │
-    ├─ Service Bus trigger (cross-tenant federated identity via Functions runtime)
-    │    SERVICE_BUS_CONNECTION__fullyQualifiedNamespace
-    │    SERVICE_BUS_CONNECTION__credential          = "managedidentityasfederatedidentity"
-    │    SERVICE_BUS_CONNECTION__azureCloud          = "public"
-    │    SERVICE_BUS_CONNECTION__clientId            = <App Registration client ID in Tenant B>
-    │    SERVICE_BUS_CONNECTION__tenantId            = <Tenant B ID>
-    │    SERVICE_BUS_CONNECTION__managedIdentityClientId = <UAMI client ID>
+    │  ManagedIdentityCredential(client_id=UAMI)
+    │  .get_token("api://AzureADTokenExchange")
+    │  → short-lived federated token (Tenant A IMDS)
+    ▼
+  ClientAssertionCredential(
+      tenant_id=<Tenant B>,
+      client_id=<App Registration in Tenant B>,
+      func=get_assertion,           # returns the federated token above
+  )
     │
-    │    Token-exchange flow:
-    │      UAMI token (Tenant A) → federated credential on App Registration (Tenant B)
-    │      → Tenant B token → Service Bus Data Receiver access on Tenant B namespace
+    │  client_assertion → Tenant B token exchange
+    ▼
+  ServiceBusClient(fully_qualified_namespace=..., credential=...)
     │
-    └─ ManagedIdentityCredential(client_id=UAMI)
-         │
-         ▼
-       BlobServiceClient (Tenant A Storage Account)
+    ▼
+  Service Bus topic subscription (Tenant B)
 
-Important: On Consumption and Flex Consumption plans, configuring a trigger
-with a cross-tenant connection disables platform-based auto-scaling for that
-trigger (see https://aka.ms/functions-cross-tenant-connections).  The function
-still fires; manual or metric-based scaling rules can compensate if needed.
+Blob Storage in Tenant A is reached with a separate UAMI credential:
+
+  ManagedIdentityCredential(client_id=UAMI)
+    │
+    ▼
+  BlobServiceClient (Tenant A Storage Account)
 
 Required application settings
 ──────────────────────────────
-SERVICE_BUS_CONNECTION__fullyQualifiedNamespace
+CROSS_TENANT_SERVICE_BUS_NAMESPACE
                                 – FQDN of the Service Bus namespace in Tenant B,
                                   e.g. mybus.servicebus.windows.net
-SERVICE_BUS_CONNECTION__credential
-                                – Must be "managedidentityasfederatedidentity"
-                                  for cross-tenant access
-SERVICE_BUS_CONNECTION__azureCloud
-                                – Cloud environment; use "public" for Azure
-                                  Public Cloud
-SERVICE_BUS_CONNECTION__clientId
-                                – Client ID of the multitenant App Registration
-                                  in Tenant B (crossTenantAppClientId)
-SERVICE_BUS_CONNECTION__tenantId
-                                – Entra Tenant ID of Tenant B
-SERVICE_BUS_CONNECTION__managedIdentityClientId
-                                – Client ID of the UAMI in Tenant A (same
-                                  value as USER_ASSIGNED_MI_CLIENT_ID)
+CROSS_TENANT_TENANT_ID          – Entra Tenant ID of Tenant B
+CROSS_TENANT_APP_CLIENT_ID      – Client ID of the multitenant App Registration
+                                  in Tenant B
 CROSS_TENANT_TOPIC_NAME         – Service Bus topic name
 CROSS_TENANT_SUBSCRIPTION_NAME  – Service Bus subscription name
 USER_ASSIGNED_MI_CLIENT_ID      – Client ID of the UAMI in Tenant A
 STORAGE_ACCOUNT_NAME            – Storage account name (Tenant A)
 STORAGE_CONTAINER_NAME          – Blob container name for received messages
+TIMER_SCHEDULE                  – (optional) NCRONTAB schedule;
+                                  default "0 */1 * * * *"
+SB_MAX_MESSAGE_COUNT            – (optional) max messages per poll; default 100
+SB_MAX_WAIT_TIME_SECONDS        – (optional) max wait time per poll in seconds;
+                                  default 5
 """
 
 import json
@@ -70,7 +65,8 @@ import uuid
 from datetime import UTC, datetime
 
 import azure.functions as func
-from azure.identity import ManagedIdentityCredential
+from azure.identity import ClientAssertionCredential, ManagedIdentityCredential
+from azure.servicebus import ServiceBusClient, ServiceBusReceivedMessage
 from azure.storage.blob import BlobServiceClient
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -95,9 +91,44 @@ def _opt_env(name: str, default: str) -> str:
 # Credential factories
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _build_service_bus_credential() -> ClientAssertionCredential:
+    """
+    Build a ``ClientAssertionCredential`` that performs the cross-tenant token
+    exchange required to authenticate against Service Bus in Tenant B.
+
+    Flow:
+      1. ``ManagedIdentityCredential`` obtains a short-lived federated token
+         with audience ``api://AzureADTokenExchange`` from Tenant A's IMDS.
+      2. ``ClientAssertionCredential`` presents that token as a client
+         assertion to Tenant B's token endpoint, receiving a Tenant B token
+         scoped to Service Bus.
+    """
+    tenant_id = _require_env("CROSS_TENANT_TENANT_ID")
+    client_id = _require_env("CROSS_TENANT_APP_CLIENT_ID")
+    uami_client_id = _require_env("USER_ASSIGNED_MI_CLIENT_ID")
+
+    uami_credential = ManagedIdentityCredential(client_id=uami_client_id)
+
+    def get_assertion() -> str:
+        try:
+            return uami_credential.get_token("api://AzureADTokenExchange").token
+        except Exception as exc:
+            raise RuntimeError(
+                "Failed to obtain federated assertion token from IMDS for "
+                "cross-tenant Service Bus authentication. Verify that the UAMI "
+                f"'{uami_client_id}' is correctly assigned and IMDS is reachable."
+            ) from exc
+
+    return ClientAssertionCredential(
+        tenant_id=tenant_id,
+        client_id=client_id,
+        func=get_assertion,
+    )
+
+
 def _build_storage_credential() -> ManagedIdentityCredential:
     """
-    Build a ManagedIdentityCredential scoped to the UAMI in Tenant A for
+    Build a ``ManagedIdentityCredential`` scoped to the UAMI in Tenant A for
     accessing the Storage Account in the same tenant.
     """
     uami_client_id = _require_env("USER_ASSIGNED_MI_CLIENT_ID")
@@ -111,20 +142,28 @@ def _build_storage_credential() -> ManagedIdentityCredential:
 def _write_message_to_blob(
     blob_service_client: BlobServiceClient,
     container_name: str,
-    message: func.ServiceBusMessage,
+    message: ServiceBusReceivedMessage,
 ) -> str:
     """
-    Persist a single Service Bus message payload as a blob.
+    Persist a single Service Bus message payload as a JSON blob.
 
-    Blob naming: <ISO-date>/<message-id>.json
+    Blob naming: ``<YYYY>/<MM>/<DD>/<message-id>.json``
+
     Returns the blob name that was written.
     """
     message_id = message.message_id or str(uuid.uuid4())
     date_prefix = datetime.now(UTC).strftime("%Y/%m/%d")
     blob_name = f"{date_prefix}/{message_id}.json"
 
-    # Build a structured envelope so consumers know the origin and metadata
-    payload_bytes = message.get_body()
+    # ``message.body`` may be raw bytes or an iterable of bytes chunks.
+    body = message.body
+    try:
+        payload_bytes: bytes = body if isinstance(body, bytes) else b"".join(body)
+    except TypeError as exc:
+        raise TypeError(
+            f"Unexpected Service Bus message body format: {type(body).__name__}. "
+            "Expected bytes or an iterable of bytes."
+        ) from exc
     try:
         body_text = payload_bytes.decode("utf-8")
     except UnicodeDecodeError:
@@ -161,43 +200,80 @@ def _write_message_to_blob(
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
-_SB_TOPIC = _opt_env("CROSS_TENANT_TOPIC_NAME", "")
-_SB_SUBSCRIPTION = _opt_env("CROSS_TENANT_SUBSCRIPTION_NAME", "")
+_TIMER_SCHEDULE = _opt_env("TIMER_SCHEDULE", "0 */1 * * * *")
 
 
-@app.service_bus_topic_trigger(
-    arg_name="message",
-    topic_name=_SB_TOPIC,
-    subscription_name=_SB_SUBSCRIPTION,
-    connection="SERVICE_BUS_CONNECTION",
+@app.timer_trigger(
+    schedule=_TIMER_SCHEDULE,
+    arg_name="timer",
+    run_on_startup=False,
+    use_monitor=False,
 )
-def service_bus_subscriber(message: func.ServiceBusMessage) -> None:
+def service_bus_subscriber(timer: func.TimerRequest) -> None:
     """
-    Service Bus–triggered function that processes messages from a cross-tenant
-    Service Bus topic subscription and forwards them to Azure Blob Storage.
+    Timer-triggered function that polls a cross-tenant Service Bus topic
+    subscription and writes each message to Azure Blob Storage.
+
+    Uses ``ClientAssertionCredential`` for cross-tenant Service Bus access and
+    ``ManagedIdentityCredential`` for same-tenant Blob Storage access.
     """
+    if timer.past_due:
+        logging.warning("Timer is past due; processing may have been delayed.")
+
+    # ── Required configuration ────────────────────────────────────────────────
+    sb_namespace = _require_env("CROSS_TENANT_SERVICE_BUS_NAMESPACE")
+    topic_name = _require_env("CROSS_TENANT_TOPIC_NAME")
+    subscription_name = _require_env("CROSS_TENANT_SUBSCRIPTION_NAME")
     storage_account_name = _require_env("STORAGE_ACCOUNT_NAME")
     container_name = _require_env("STORAGE_CONTAINER_NAME")
 
-    storage_url = f"https://{storage_account_name}.blob.core.windows.net"
+    # ── Optional configuration ────────────────────────────────────────────────
+    max_message_count = int(_opt_env("SB_MAX_MESSAGE_COUNT", "100"))
+    max_wait_time = float(_opt_env("SB_MAX_WAIT_TIME_SECONDS", "5"))
+
+    # ── Credentials ───────────────────────────────────────────────────────────
+    sb_credential = _build_service_bus_credential()
     storage_credential = _build_storage_credential()
 
+    storage_url = f"https://{storage_account_name}.blob.core.windows.net"
     blob_service_client = BlobServiceClient(
         account_url=storage_url, credential=storage_credential
     )
 
-    try:
-        blob_name = _write_message_to_blob(
-            blob_service_client, container_name, message
-        )
-        logging.info(
-            "Message %s written to blob '%s'.",
-            message.message_id,
-            blob_name,
-        )
-    except Exception:  # noqa: BLE001 – catch-all so any failure abandons the message
-        logging.exception(
-            "Failed to process message %s; re-raising so the runtime abandons it.",
-            message.message_id,
-        )
-        raise
+    # ── Poll and process messages ─────────────────────────────────────────────
+    processed = 0
+    failed = 0
+
+    with ServiceBusClient(
+        fully_qualified_namespace=sb_namespace, credential=sb_credential
+    ) as sb_client:
+        with sb_client.get_subscription_receiver(
+            topic_name=topic_name, subscription_name=subscription_name
+        ) as receiver:
+            messages = receiver.receive_messages(
+                max_message_count=max_message_count,
+                max_wait_time=max_wait_time,
+            )
+            for message in messages:
+                try:
+                    blob_name = _write_message_to_blob(
+                        blob_service_client, container_name, message
+                    )
+                    receiver.complete_message(message)
+                    logging.info(
+                        "Message %s written to blob '%s'.",
+                        message.message_id,
+                        blob_name,
+                    )
+                    processed += 1
+                except Exception:  # noqa: BLE001
+                    logging.exception(
+                        "Failed to process message %s; abandoning.",
+                        message.message_id,
+                    )
+                    receiver.abandon_message(message)
+                    failed += 1
+
+    logging.info(
+        "Poll complete: %d processed, %d failed/abandoned.", processed, failed
+    )
