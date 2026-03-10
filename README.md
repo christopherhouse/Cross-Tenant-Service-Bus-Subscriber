@@ -71,6 +71,23 @@ A **Tenant B administrator** must:
 
 ---
 
+## Table of contents
+
+- [Architecture](#architecture)
+- [Repository structure](#repository-structure)
+- [Prerequisites](#prerequisites)
+- [One-time setup](#one-time-setup)
+- [Deployment](#deployment)
+- [Local development](#local-development)
+- [Running tests](#running-tests)
+- [Application settings reference](#application-settings-reference)
+- [GitHub Copilot Coding Agent](#github-copilot-coding-agent)
+- [Security notes](#security-notes)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
+
 ## Repository structure
 
 ```
@@ -99,7 +116,8 @@ A **Tenant B administrator** must:
 │   ├── agents/
 │   │   ├── bicep-infrastructure.md         # Bicep specialist agent
 │   │   ├── python-function.md              # Python function specialist agent
-│   │   └── cicd-workflow.md                # CI/CD specialist agent
+│   │   ├── cicd-workflow.md                # CI/CD specialist agent
+│   │   └── documentation.md               # Documentation specialist agent
 │   └── workflows/
 │       ├── deploy-infra.yml                # Bicep deployment workflow
 │       └── deploy-function.yml             # Container build and deployment workflow
