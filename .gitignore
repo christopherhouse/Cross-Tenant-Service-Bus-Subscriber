@@ -201,6 +201,9 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+# Bicep compiled output
+infra/*.json
+
 # Marimo
 marimo/_static/
 marimo/_lsp/
