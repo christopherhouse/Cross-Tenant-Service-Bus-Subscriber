@@ -1,8 +1,8 @@
 /*
   modules/function-app.bicep
   Provisions the Azure Function App with:
-  • Python 3.13 Linux runtime
-  • User Assigned Managed Identity
+  • Containerised Linux runtime pulled from Azure Container Registry (ACR)
+  • User Assigned Managed Identity (used for ACR pull + AzureWebJobsStorage)
   • All application settings required by the function code
   • AzureWebJobsStorage configured to use identity-based auth
   • Cross-tenant Service Bus auth handled entirely by the Python function code
@@ -58,6 +58,13 @@ param storageAccountNameForMessages  string
 @description('Blob container name where received messages are stored.')
 param messageContainerName           string
 
+// Container Registry settings
+@description('Login server URL of the Azure Container Registry (e.g. crsbsubdev.azurecr.io).')
+param acrLoginServer                 string
+
+@description('Container image name to pull from ACR (e.g. func-sbsub).')
+param imageName                      string
+
 resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
   name:     name
   location: location
@@ -70,7 +77,9 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
     serverFarmId: appServicePlanId
     reserved:     true
     siteConfig: {
-      linuxFxVersion: 'Python|3.13'
+      linuxFxVersion:              'DOCKER|${acrLoginServer}/${imageName}:latest'
+      acrUseManagedIdentityCreds:  true
+      acrUserManagedIdentityID:    uamiClientId
       appSettings: [
         // ── Azure Functions runtime ─────────────────────────────────────────
         {
@@ -81,15 +90,10 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
           name:  'FUNCTIONS_WORKER_RUNTIME'
           value: 'python'
         }
-        // ── Deployment: disable Oryx remote build ───────────────────────────
-        // Packages are pre-installed locally via pip --target and bundled in
-        // the deployment zip.  Disabling SCM/Oryx build here ensures that any
-        // deployment path (GitHub Actions, VS Code, Azure CLI, Kudu portal)
-        // uses those bundled packages rather than triggering a remote build
-        // that would overwrite them.
+        // ── Docker registry (ACR) ───────────────────────────────────────────
         {
-          name:  'SCM_DO_BUILD_DURING_DEPLOYMENT'
-          value: '0'
+          name:  'DOCKER_REGISTRY_SERVER_URL'
+          value: 'https://${acrLoginServer}'
         }
         // ── Identity-based AzureWebJobsStorage ──────────────────────────────
         // Avoids storing a storage connection string in plaintext.

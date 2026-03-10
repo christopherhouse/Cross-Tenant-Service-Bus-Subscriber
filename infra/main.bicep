@@ -8,11 +8,12 @@
   Resources provisioned
   ─────────────────────
   • User Assigned Managed Identity   – used by the Function for both cross-tenant
-                                       Service Bus auth and same-tenant Blob auth
+                                       Service Bus auth and same-tenant Blob/ACR auth
   • Storage Account                  – AzureWebJobsStorage + message blob sink
   • Blob Container                   – target container for received messages
-  • App Service Plan                 – Flex Consumption (serverless Python)
-  • Function App                     – Python 3.13, v2 programming model
+  • Azure Container Registry (ACR)   – hosts the containerised Function image
+  • App Service Plan                 – Elastic Premium EP1 (required for containers)
+  • Function App                     – containerised Python image from ACR
   • Application Insights workspace   – diagnostics
   • Log Analytics workspace          – backing store for App Insights
 */
@@ -58,8 +59,10 @@ param messageContainerName string = 'sb-messages'
 var abbr = '${workloadName}-${environmentName}'
 var uamiName = 'id-${abbr}'
 var storageAccountName = replace('st${workloadName}${environmentName}', '-', '') // storage names: no hyphens, max 24 chars
+var acrName = 'cr${workloadName}${environmentName}'                               // ACR names: no hyphens, max 50 chars
 var appServicePlanName = 'asp-${abbr}'
 var functionAppName = 'func-${abbr}'
+var imageName = 'func-${abbr}'
 var logAnalyticsName = 'log-${abbr}'
 var appInsightsName = 'appi-${abbr}'
 
@@ -91,6 +94,15 @@ module appServicePlan 'modules/app-service-plan.bicep' = {
   }
 }
 
+module containerRegistry 'modules/container-registry.bicep' = {
+  name: 'deploy-container-registry'
+  params: {
+    name: acrName
+    location: location
+    uamiPrincipalId: identity.outputs.principalId
+  }
+}
+
 module functionApp 'modules/function-app.bicep' = {
   name: 'deploy-function-app'
   params: {
@@ -109,6 +121,8 @@ module functionApp 'modules/function-app.bicep' = {
     crossTenantAppClientId: crossTenantAppClientId
     storageAccountNameForMessages: storage.outputs.name
     messageContainerName: messageContainerName
+    acrLoginServer: containerRegistry.outputs.loginServer
+    imageName: imageName
   }
 }
 
@@ -145,3 +159,9 @@ output functionAppName string = functionApp.outputs.name
 
 @description('Storage Account name.')
 output storageAccountName string = storage.outputs.name
+
+@description('Name of the Azure Container Registry.')
+output acrName string = containerRegistry.outputs.name
+
+@description('Login server URL of the Azure Container Registry.')
+output acrLoginServer string = containerRegistry.outputs.loginServer
