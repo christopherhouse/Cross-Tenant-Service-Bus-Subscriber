@@ -1,9 +1,9 @@
 # deploy-dotnet-function.yml
 #
-# Builds and deploys the .NET 10 Azure Function App as a zip package directly
-# to the Function App using the Kudu zip-deploy API
-# (az functionapp deployment source config-zip).  No container registry or
-# Docker daemon is required on the runner.
+# Builds and deploys the .NET 10 Azure Function App as a container image to
+# Azure Container Registry (ACR), then updates the Function App to use the
+# new image.  The Docker image is built inside ACR Tasks (az acr build) so
+# no local Docker daemon is required on the runner.
 #
 # Trigger
 # ───────
@@ -22,10 +22,14 @@
 # AZURE_DOTNET_FUNCTION_APP_NAME – name of the deployed .NET Function App (output
 #                                  from infra deployment, e.g. func-sbsub-dev-dotnet)
 # ENVIRONMENT_NAME               – deployment environment label (dev | test | prod)
+# WORKLOAD_NAME                  – short workload prefix used to derive the image
+#                                  name (e.g. sbsub)
+# ACR_NAME                       – name of the Azure Container Registry (e.g. crsbsubdev)
 #
 # Derived (not separate variables)
 # ────────────────────────────────
-# Zip artifact: dotnet-function.zip (built from dotnet publish output, discarded after deploy)
+# Image name: func-<WORKLOAD_NAME>-dotnet-<ENVIRONMENT_NAME>   (e.g. func-sbsub-dotnet-dev)
+# Image tag : ${{ github.sha }} (short commit SHA used for traceability)
 
 name: Deploy .NET Function App
 
@@ -44,13 +48,16 @@ permissions:
 
 jobs:
   build-and-deploy:
-    name: Build & Deploy .NET Function (Zip Deploy)
+    name: Build & Deploy .NET Function (Container)
     runs-on: ubuntu-latest
     environment: ${{ vars.ENVIRONMENT_NAME || 'dev' }}
 
     env:
-      PUBLISH_DIR: ./publish
-      ZIP_ARTIFACT: dotnet-function.zip
+      # ACR_NAME comes directly from the GitHub Variable set in Actions > Variables.
+      # IMAGE_NAME is derived from WORKLOAD_NAME and ENVIRONMENT_NAME, with 'dotnet'
+      # included to distinguish this image from the Python Function App image.
+      ACR_NAME:   "${{ vars.ACR_NAME }}"
+      IMAGE_NAME: "func-${{ vars.WORKLOAD_NAME || 'sbsub' }}-dotnet-${{ vars.ENVIRONMENT_NAME || 'dev' }}"
 
     steps:
       - name: Checkout repository
@@ -83,28 +90,27 @@ jobs:
           tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      # Publish the .NET Function App to the PUBLISH_DIR directory in Release
-      # configuration.  --no-restore is safe here because the Restore step above
-      # already fetched all NuGet packages for the solution.
-      - name: Publish .NET Function App
-        run: |
-          dotnet publish src/dotnet/FunctionApp/FunctionApp.csproj \
-            --configuration Release \
-            --output "${{ env.PUBLISH_DIR }}" \
-            --no-restore
+      # Build the container image inside ACR Tasks – no local Docker daemon needed.
+      # The build context (src/dotnet/FunctionApp) is uploaded to ACR and built there.
+      # Image is tagged with the commit SHA for traceability and immutability.
+      - name: Build and push container image to ACR
+        uses: azure/CLI@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            az acr build \
+              --registry "${{ env.ACR_NAME }}" \
+              --image "${{ env.IMAGE_NAME }}:${{ github.sha }}" \
+              src/dotnet/FunctionApp
 
-      # Zip the published output so it can be uploaded via the Kudu zip-deploy API.
-      # working-directory scopes the shell to the publish directory so the archive
-      # root contains the function binaries directly (no extra subfolder level).
-      - name: Create deployment zip
-        working-directory: ${{ env.PUBLISH_DIR }}
-        run: zip -r "../${{ env.ZIP_ARTIFACT }}" .
-
-      # Deploy the zip package to the Azure Function App using the Kudu zip-deploy
-      # API.  This replaces the app content in-place and triggers a restart.
-      - name: Deploy zip to Function App
-        run: |
-          az functionapp deployment source config-zip \
-            --resource-group "${{ vars.AZURE_RG_NAME }}" \
-            --name "${{ vars.AZURE_DOTNET_FUNCTION_APP_NAME }}" \
-            --src "${{ env.ZIP_ARTIFACT }}"
+      # Point the Function App at the newly built image (SHA tag).
+      # Azure pulls the image from ACR and restarts the app automatically.
+      - name: Update Function App container image
+        uses: azure/CLI@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            az functionapp config container set \
+              --resource-group "${{ vars.AZURE_RG_NAME }}" \
+              --name "${{ vars.AZURE_DOTNET_FUNCTION_APP_NAME }}" \
+              --image "${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}"
