@@ -1,0 +1,118 @@
+# deploy-dotnet-function.yml
+#
+# Builds and deploys the .NET 10 Azure Function App as a container image to
+# Azure Container Registry (ACR), then updates the Function App to pull the
+# new image.  The Docker image is built inside ACR Tasks (az acr build) so
+# no local Docker daemon is required on the runner.
+#
+# Trigger
+# ───────
+# • Push to main that touches src/dotnet/** or the workflow file itself
+# • Manual dispatch
+#
+# Required GitHub Secrets (same as deploy-infra.yml)
+# ───────────────────────
+# AZURE_CLIENT_ID
+# AZURE_TENANT_ID
+# AZURE_SUBSCRIPTION_ID
+#
+# Required GitHub Variables
+# ─────────────────────────
+# AZURE_RG_NAME                  – resource group that contains the Function App
+# AZURE_DOTNET_FUNCTION_APP_NAME – name of the deployed .NET Function App (output
+#                                  from infra deployment, e.g. func-sbsub-dev-dotnet)
+# ENVIRONMENT_NAME               – deployment environment label (dev | test | prod)
+# WORKLOAD_NAME                  – short workload prefix used to derive the image
+#                                  name (e.g. sbsub)
+# ACR_NAME                       – name of the Azure Container Registry (e.g. crsbsubdev)
+#
+# Derived (not separate variables)
+# ────────────────────────────────
+# Image name: func-<WORKLOAD_NAME>-<ENVIRONMENT_NAME>-dotnet  (e.g. func-sbsub-dev-dotnet)
+# Image tag : ${{ github.sha }} (full commit SHA used for traceability and immutability)
+
+name: Deploy .NET Function App
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/dotnet/**'
+      - '.github/workflows/deploy-dotnet-function.yml'
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # required for OIDC federated credential login
+  contents: read
+
+jobs:
+  build-and-deploy:
+    name: Build & Deploy .NET Function (Container)
+    runs-on: ubuntu-latest
+    environment: ${{ vars.ENVIRONMENT_NAME || 'dev' }}
+
+    env:
+      # ACR_NAME comes directly from the GitHub Variable set in Actions > Variables.
+      # IMAGE_NAME is derived from WORKLOAD_NAME and ENVIRONMENT_NAME; the -dotnet
+      # suffix distinguishes this image from the Python function image in the same ACR.
+      ACR_NAME:   "${{ vars.ACR_NAME }}"
+      IMAGE_NAME: "func-${{ vars.WORKLOAD_NAME || 'sbsub' }}-${{ vars.ENVIRONMENT_NAME || 'dev' }}-dotnet"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Install the .NET 10 SDK so that dotnet restore and dotnet test are available.
+      # The wildcard patch version (10.0.x) ensures the latest 10.0 patch is used
+      # without pinning to a specific patch release.
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # Restore NuGet packages for the entire solution before running tests.
+      # A separate restore step allows the subsequent test step to pass --no-restore,
+      # avoiding redundant network calls and making the test step faster.
+      - name: Restore NuGet packages
+        run: dotnet restore src/dotnet/CrossTenantServiceBus.slnx
+
+      - name: Run unit tests
+        run: |
+          dotnet test src/dotnet/CrossTenantServiceBus.slnx \
+            --configuration Release \
+            --no-restore
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Build the container image inside ACR Tasks – no local Docker daemon needed.
+      # The build context (src/dotnet/FunctionApp) is uploaded to ACR and built there.
+      # The Dockerfile path is specified explicitly for clarity.
+      # Image is tagged with the commit SHA for traceability and immutability.
+      - name: Build and push container image to ACR
+        uses: azure/CLI@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            az acr build \
+              --registry "${{ env.ACR_NAME }}" \
+              --image "${{ env.IMAGE_NAME }}:${{ github.sha }}" \
+              --file src/dotnet/FunctionApp/Dockerfile \
+              src/dotnet/FunctionApp
+
+      # Point the .NET Function App at the newly built image (SHA tag).
+      # Azure pulls the updated image from ACR and restarts the app automatically.
+      - name: Update Function App container image
+        uses: azure/CLI@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            az functionapp config container set \
+              --resource-group "${{ vars.AZURE_RG_NAME }}" \
+              --name "${{ vars.AZURE_DOTNET_FUNCTION_APP_NAME }}" \
+              --image "${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}"
