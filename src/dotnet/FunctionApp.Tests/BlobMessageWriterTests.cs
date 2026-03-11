@@ -1,5 +1,6 @@
 using Azure.Messaging.ServiceBus;
 using Azure.Storage.Blobs;
+using Azure.Storage.Blobs.Models;
 using CrossTenantServiceBus.FunctionApp;
 using Microsoft.Extensions.Logging;
 using Moq;
@@ -47,7 +48,7 @@ public class BlobMessageWriterTests
                 It.IsAny<Stream>(),
                 It.IsAny<bool>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Mock.Of<Azure.Response<Azure.Storage.Blobs.Models.BlobContentInfo>>());
+            .ReturnsAsync(Mock.Of<Azure.Response<BlobContentInfo>>());
 
         var containerMock = new Mock<BlobContainerClient>();
         containerMock
@@ -110,7 +111,7 @@ public class BlobMessageWriterTests
                 using var reader = new StreamReader(stream);
                 capturedJson = await reader.ReadToEndAsync();
             })
-            .ReturnsAsync(Mock.Of<Azure.Response<Azure.Storage.Blobs.Models.BlobContentInfo>>());
+            .ReturnsAsync(Mock.Of<Azure.Response<BlobContentInfo>>());
 
         var containerMock = new Mock<BlobContainerClient>();
         containerMock.Setup(c => c.GetBlobClient(It.IsAny<string>())).Returns(blobMock.Object);
@@ -187,7 +188,7 @@ public class BlobMessageWriterTests
                 using var reader = new StreamReader(stream);
                 capturedJson = await reader.ReadToEndAsync();
             })
-            .ReturnsAsync(Mock.Of<Azure.Response<Azure.Storage.Blobs.Models.BlobContentInfo>>());
+            .ReturnsAsync(Mock.Of<Azure.Response<BlobContentInfo>>());
 
         var containerMock = new Mock<BlobContainerClient>();
         containerMock.Setup(c => c.GetBlobClient(It.IsAny<string>())).Returns(blobMock.Object);

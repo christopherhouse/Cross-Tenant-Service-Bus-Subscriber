@@ -1,7 +1,7 @@
 namespace CrossTenantServiceBus.FunctionApp;
 
 /// <summary>
-/// Centralised definitions for all application-setting / environment-variable names.
+/// Centralized definitions for all application-setting / environment-variable names.
 /// </summary>
 internal static class SettingNames
 {
