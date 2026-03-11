@@ -39,6 +39,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     requiring a local Docker daemon on the runner.
   - `az functionapp config container set` — updates the running Function App
     to pull the new image (tagged with the commit SHA for traceability).
+- **`deploy-dotnet-function.yml`** CI/CD workflow reverted from zip-deploy back
+  to container-based deployment:
+  - Removed `dotnet publish`, zip creation, and
+    `az functionapp deployment source config-zip` steps.
+  - Added `az acr build` (ACR Tasks) to build and push the .NET container image
+    from `src/dotnet/FunctionApp` — no local Docker daemon required on the
+    runner.
+  - Added `az functionapp config container set` to update the running .NET
+    Function App to pull the new image (tagged with the commit SHA).
+  - Requires one new required GitHub Variable (`ACR_NAME`) and one optional
+    variable (`WORKLOAD_NAME`, defaults to `sbsub` if not set).
+  - Image name is derived as `func-<WORKLOAD_NAME>-dotnet-<ENVIRONMENT_NAME>`
+    (e.g. `func-sbsub-dotnet-dev`) to distinguish it from the Python Function
+    App image.
 
 ### Security
 - ACR pull authentication uses UAMI-based managed identity
