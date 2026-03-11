@@ -1,0 +1,22 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+
+    "CROSS_TENANT_SERVICE_BUS_NAMESPACE": "<your-servicebus-namespace>.servicebus.windows.net",
+    "CROSS_TENANT_TENANT_ID": "<tenant-b-entra-tenant-id>",
+    "CROSS_TENANT_APP_CLIENT_ID": "<app-registration-client-id-in-tenant-b>",
+    "CROSS_TENANT_TOPIC_NAME": "<your-topic-name>",
+    "CROSS_TENANT_SUBSCRIPTION_NAME": "<your-subscription-name>",
+
+    "USER_ASSIGNED_MI_CLIENT_ID": "<user-assigned-mi-client-id-in-tenant-a>",
+
+    "STORAGE_ACCOUNT_NAME": "<your-storage-account-name>",
+    "STORAGE_CONTAINER_NAME": "sb-messages",
+
+    "TIMER_SCHEDULE": "0 */1 * * * *",
+    "SB_MAX_MESSAGE_COUNT": "100",
+    "SB_MAX_WAIT_TIME_SECONDS": "5"
+  }
+}
